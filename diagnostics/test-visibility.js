@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('assert'),create=require('../uxp/visibility');
+let muted=false;const guid='12345678-1234-1234-1234-123456789012';
+const track={id:2,name:'Subtitle',isMuted:async()=>muted,setMute:async v=>{muted=v;return true;},getTrackItems:async()=>[{getStartTime:async()=>({ticks:'0'}),getEndTime:async()=>({ticks:'20'})}]};
+const seq={guid,name:'RYZE_CONVERT_TEST',getCaptionTrackCount:async()=>1,getCaptionTrack:async()=>track,getVideoTrackCount:async()=>0,getAudioTrackCount:async()=>0};
+const ppro={Constants:{TrackItemType:{CLIP:1}},Project:{getActiveProject:async()=>({getActiveSequence:async()=>seq})}};
+(async()=>{const vis=create(ppro),base=await vis.capture();await vis.set(base,true);assert(muted);await vis.set(base,false);vis.restored(base,await vis.capture());
+ const good={...base,video:[{index:0,id:'3',items:[{start:'0',end:'20'}]}]},output={trackIndex:0,trackID:'3',count:1};assert(vis.beforeHide(base,good,output));
+ assert.throws(()=>vis.beforeHide(base,good,{...output,trackID:'4'}));
+ assert.throws(()=>vis.beforeHide(base,{...good,caption:[{...base.caption[0],muted:true}]},output));
+ seq.guid='other';await assert.rejects(()=>vis.set(base,true),/sequence changed/);assert.strictEqual(muted,false);
+ seq.guid=guid;track.id=9;await assert.rejects(()=>vis.set(base,true),/identity changed/);assert.strictEqual(muted,false);
+ console.log('PASS UXP mock: visibility readback/restoration, identity refusal, cross-API output track checks and original caption state guard.');
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,0 +1,7 @@
+RYZE 1.0.7 local validation
+PASS builder source validation and all three original MOGRT hashes.
+PASS all 15 diagnostics/test-*.js suites on Linux (mock Premiere/UXP).
+PASS PowerShell parser on all four PS1 scripts. Syntax only; Windows signing and installer not executed.
+PASS conversion/Undo implementation comparison with 1.0.6: only build identifiers differ.
+UI scroll uses Adobe-documented overflow-y; real Premiere panel layout requires runtime verification.
+No malware scan or company approval claimed. Exact compiled Windows EXE not supplied.

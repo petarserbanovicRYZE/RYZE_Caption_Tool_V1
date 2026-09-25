@@ -1,0 +1,19 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html{height:100%;overflow:hidden}body{height:100%;margin:0;display:flex;flex-direction:column;overflow:hidden;background:#20221f;color:#f3f3ee;padding:0;font:13px Arial}h2{font-size:22px;margin:0 0 4px}p{line-height:1.5;margin:10px 0}.muted{color:#b4b9ad;font-size:12px}.label{font-size:11px;color:#b4b9ad;margin-top:24px;margin-bottom:8px}button{border:1px solid #50574a;border-radius:8px;background:#34392f;color:#f1f3ec;padding:12px;margin:0 6px 8px 0;font-size:13px}button.chosen{background:#c5d8a7;color:#202719;border-color:#c5d8a7}button:disabled{opacity:.45}#run{width:100%;background:#c5d8a7;color:#202719;border-color:#c5d8a7;font-weight:bold;margin:18px 0 8px}#undo{width:100%;margin:0 0 18px;background:#292d25}.styles{display:flex}.styles button{flex:1}.styles button:last-child{margin-right:0}#status{padding:12px;background:#2a2e26;border-radius:8px;min-height:42px}#progress{height:5px;background:#373d31;margin-top:8px;border-radius:3px}#bar{height:5px;width:0%;background:#c5d8a7;border-radius:3px}.footer{margin-top:22px;border-top:1px solid #3b4135;padding-top:14px}#save,#connect{font-size:12px;padding:8px 12px;background:#292d25}#connect{display:none}#reportStatus{font-size:12px;color:#c5d8a7}
+
+#content{flex:1;min-height:0;overflow-y:scroll;overflow-x:hidden;padding:18px 20px}#support{flex-shrink:0;padding:10px 16px;background:#20221f;border-top:1px solid #3b4135}#reportStatus{margin:0;max-height:64px;overflow-y:auto}#save,#connect{margin-bottom:4px}#supportActions{display:flex;flex-wrap:wrap}
+</style></head><body>
+<div id="content">
+<h2>RYZE Caption Tool</h2><p class="muted">Turn your captions into RYZE graphics.</p>
+<p class="label">1. CREATE CAPTIONS IN PREMIERE</p>
+<p class="muted">Transcribe your sequence, then choose Create captions.</p>
+<p class="label">2. CHOOSE YOUR STYLE</p>
+<div class="styles"><button id="v3" class="chosen">V3</button><button id="v5">V5</button><button id="stroke">Stroke</button></div>
+<p class="muted">3 words per line · Up to 2 lines · Scale 80%</p>
+<button id="run" disabled>Convert captions</button><button id="undo" disabled>Undo last conversion</button>
+<p id="status">Connecting…</p><div id="progress"><div id="bar"></div></div>
+<p class="muted">Converts all caption tracks, including hidden ones. Originals are kept and hidden after success. Use Undo before converting again to replace a style.</p>
+<p class="muted">Save a project copy before converting. Keep the timeline unchanged while processing.</p><p class="muted">RYZE 1.0.7 · Team preview</p>
+</div>
+<div id="support"><div id="supportActions"><button id="save">Report bug</button><button id="connect">Retry connection</button></div><p id="reportStatus"></p></div>
+<script src="index.js"></script></body></html>

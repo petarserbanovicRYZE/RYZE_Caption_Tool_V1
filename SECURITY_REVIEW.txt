@@ -1,0 +1,48 @@
+RYZE 1.0.7 — installer review and distribution limits
+
+The reported SHA256 values 54a85c98ca52a0e53f87ce2f5f991e314af14c8b4de706ce15596e8b0893178d
+and 862c559c85b8462a29129a10239908633b8b5d0bbeab39069aea0fa9c431f5ee
+identify different binaries. Detection counts cannot be combined or interpreted as
+an improvement without a complete report for each exact binary. TRiD percentages
+are format guesses, not evidence that PECompact was used. This builder uses Inno
+Setup compression, not a separate executable packer/obfuscator.
+
+No antivirus-clearance claim is made. No AV exclusions, disabled protections,
+renaming tricks or changes intended to conceal behavior are included.
+The existing installer runs a readable PowerShell installation script with
+ExecutionPolicy Bypass (process-only); company Group Policy still takes priority.
+It installs CEP into the user's Adobe extensions directory and invokes Adobe's
+existing UPIA for the UXP package. Runtime helper listens on authenticated localhost
+127.0.0.1:48771. Report bug writes a local file; it does not upload reports.
+This source review is not a malware analysis of the user's compiled EXE or tools.
+
+Build normally with BUILD.cmd for an unsigned Windows preview.
+Every successful build produces dist/RYZE_RELEASE_VERIFICATION.json recording the
+EXACT final EXE hash, file size, publisher/signature status and timestamp status.
+It never labels a file antivirus-clean or company-approved.
+
+OPTIONAL WINDOWS PUBLISHER SIGNATURE (ask company IT for their signing process):
+Use a valid code-signing certificate already provisioned in Cert:\CurrentUser\My,
+with its private key accessible to Windows. Do not share or upload private keys.
+PowerShell from the builder folder:
+  .\builder\Build.ps1 -WindowsCertificateThumbprint 'YOUR_CERTIFICATE_THUMBPRINT'
+Or sign an already built EXE:
+  .\builder\Verify-Release.ps1 -Installer .\dist\RYZE_Caption_Tool_Setup.exe -CertificateThumbprint 'YOUR_CERTIFICATE_THUMBPRINT'
+This signs the outer EXE with SHA256, requires a trusted timestamp and verifies
+Windows signature validity, then regenerates its hash/report AFTER signing.
+It does not sign the embedded PowerShell or Inno uninstaller. Organizations that
+require those signatures need their deployment/signing pipeline before rollout.
+An internal corporate certificate must be trusted on recipient PCs through IT;
+the builder does not add trusted certificates or alter security policy.
+Self-signed CEP .p12 certificates do not establish Windows publisher trust.
+A valid Authenticode signature does not guarantee zero malware detections.
+
+Before corporate distribution: IT should review the exact final EXE and report,
+validate the Adobe/Inno build tools, and scan that exact hash. If analysis confirms
+a false positive, submit that same file to the detecting vendor for correction.
+Microsoft submission: https://www.microsoft.com/en-us/wdsi/filesubmission
+Do not disable protection or make exclusions to force installation.
+
+LOCAL VERIFICATION LIMITS
+Linux source/mocked-host tests cannot validate Windows Authenticode, the compiled
+EXE's behavior, or actual Premiere UXP scrolling. Those require Windows/Premiere.

@@ -1,0 +1,37 @@
+# Build outputs
+build/
+dist/
+output/
+mac-builder/output/
+
+# Temporary files
+*.tmp
+*.log
+*.cache
+*.bak
+
+# Certificates and signing material
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.crt
+*.rnd
+
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# Generated artifacts
+*.ccx
+*.zxp
+*.pkg
+*.dmg
+*.zip

@@ -1,0 +1,175 @@
+#!/bin/bash
+set -euo pipefail
+
+VERSION="1.0.7"
+UXP_ID="com.ryze.captiontool.v1.uxp"
+CEP_ID="com.ryze.captiontool.v1.bridge"
+PORT="48771"
+INSTALL_BASE="/Library/Application Support/RYZE/CaptionToolV1"
+HELPER_SOURCE="$INSTALL_BASE/helper"
+CCX_SOURCE="$INSTALL_BASE/packages/RYZE_Caption_Tool.ccx"
+UPIA="/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/macOS/UnifiedPluginInstallerAgent"
+
+CONSOLE_USER="$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true)"
+case "$CONSOLE_USER" in
+  ''|root|loginwindow|_mbsetupuser)
+    /usr/bin/printf 'RYZE postinstall: no signed-in desktop user was found.\n' >&2
+    exit 1
+    ;;
+esac
+
+CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER")"
+USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | /usr/bin/awk '{print $2}')"
+[[ -n "$USER_HOME" && -d "$USER_HOME" ]] || {
+  /usr/bin/printf 'RYZE postinstall: could not resolve the home folder for %s.\n' "$CONSOLE_USER" >&2
+  exit 1
+}
+
+DATA_DIR="$USER_HOME/Library/Application Support/RYZE/CaptionToolV1"
+CONFIG_FILE="$DATA_DIR/connection.json"
+RECEIPT_FILE="$DATA_DIR/installed-mac.json"
+LOG_FILE="$DATA_DIR/installer-mac.log"
+CEP_PARENT="$USER_HOME/Library/Application Support/Adobe/CEP/extensions"
+CEP_TARGET="$CEP_PARENT/$CEP_ID"
+UXP_STORAGE="$USER_HOME/Library/Application Support/Adobe/UXP/PluginsStorage"
+INSTALL_TMP=""
+CEP_BACKUP=""
+CEP_INSTALLED=0
+SUCCESS=0
+
+/bin/mkdir -p "$DATA_DIR"
+/usr/sbin/chown "$CONSOLE_USER":staff "$DATA_DIR"
+/bin/chmod 0700 "$DATA_DIR"
+
+log() {
+  local message="$*"
+  /usr/bin/printf '%s %s\n' "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')" "$message" >> "$LOG_FILE"
+  /usr/bin/printf 'RYZE postinstall: %s\n' "$message"
+}
+
+fail() {
+  log "INSTALLER_STOP: $*"
+  exit 1
+}
+
+safe_remove_tree() {
+  local target="$1"
+  case "$target" in
+    "$DATA_DIR"/.installer.*|"$DATA_DIR"/.cep-backup.*|"$CEP_TARGET")
+      [[ -e "$target" ]] && /bin/rm -rf -- "$target"
+      ;;
+    *)
+      fail "refusing to remove unexpected path: $target"
+      ;;
+  esac
+}
+
+# ShellCheck cannot infer that this function is reached through the trap below.
+# shellcheck disable=SC2317
+cleanup() {
+  local status=$?
+  if [[ -n "$INSTALL_TMP" && -e "$INSTALL_TMP" ]]; then
+    safe_remove_tree "$INSTALL_TMP"
+  fi
+  if [[ $SUCCESS -ne 1 ]]; then
+    if [[ $CEP_INSTALLED -eq 1 && -e "$CEP_TARGET" ]]; then
+      safe_remove_tree "$CEP_TARGET"
+    fi
+    if [[ -n "$CEP_BACKUP" && -e "$CEP_BACKUP" ]]; then
+      /bin/mv "$CEP_BACKUP" "$CEP_TARGET" || true
+      log "Previous CEP helper restored after installation failure."
+    fi
+  fi
+  /usr/sbin/chown -R "$CONSOLE_USER":staff "$DATA_DIR" 2>/dev/null || true
+  exit "$status"
+}
+trap cleanup EXIT INT TERM
+
+run_as_user() {
+  /bin/launchctl asuser "$CONSOLE_UID" \
+    /usr/bin/sudo -u "$CONSOLE_USER" \
+    /usr/bin/env HOME="$USER_HOME" USER="$CONSOLE_USER" LOGNAME="$CONSOLE_USER" "$@"
+}
+
+[[ -d "$HELPER_SOURCE" ]] || fail "helper payload is missing"
+[[ -f "$HELPER_SOURCE/CSXS/manifest.xml" ]] || fail "CEP manifest is missing"
+[[ -f "$HELPER_SOURCE/bridge.js" ]] || fail "CEP helper entry point is missing"
+[[ -f "$CCX_SOURCE" ]] || fail "UXP CCX payload is missing"
+[[ -x "$UPIA" ]] || fail "Adobe UPIA was not found. Install or update Creative Cloud Desktop, then retry"
+/usr/bin/grep -Fq "ExtensionBundleId=\"$CEP_ID\"" "$HELPER_SOURCE/CSXS/manifest.xml" || fail "CEP bundle ID mismatch"
+/usr/bin/grep -Fq "ExtensionBundleVersion=\"$VERSION\"" "$HELPER_SOURCE/CSXS/manifest.xml" || fail "CEP version mismatch"
+
+TOKEN=""
+if [[ -f "$CONFIG_FILE" ]]; then
+  TOKEN="$(/usr/bin/sed -nE 's/.*"token"[[:space:]]*:[[:space:]]*"([a-f0-9]{64})".*/\1/p' "$CONFIG_FILE" | /usr/bin/head -n 1)"
+fi
+if [[ ${#TOKEN} -ne 64 || "$TOKEN" == *[!0-9a-f]* ]]; then
+  TOKEN="$(/usr/bin/openssl rand -hex 32)"
+fi
+[[ ${#TOKEN} -eq 64 ]] || fail "could not generate the local pairing token"
+
+CONFIG_TMP="$DATA_DIR/.connection.$$"
+/usr/bin/printf '{"schema":1,"build":"%s","port":%s,"token":"%s"}\n' "$VERSION" "$PORT" "$TOKEN" > "$CONFIG_TMP"
+/usr/sbin/chown "$CONSOLE_USER":staff "$CONFIG_TMP"
+/bin/chmod 0600 "$CONFIG_TMP"
+/bin/mv -f "$CONFIG_TMP" "$CONFIG_FILE"
+log "Per-user pairing config prepared; credential was not logged."
+
+/bin/mkdir -p "$CEP_PARENT" "$UXP_STORAGE"
+/usr/sbin/chown -R "$CONSOLE_USER":staff "$USER_HOME/Library/Application Support/Adobe/CEP"
+/usr/sbin/chown "$CONSOLE_USER":staff "$USER_HOME/Library/Application Support/Adobe/UXP" "$UXP_STORAGE"
+
+if [[ -e "$CEP_TARGET" ]]; then
+  [[ -f "$RECEIPT_FILE" ]] || fail "CEP target exists without a RYZE macOS receipt; refusing to overwrite it"
+  /usr/bin/grep -Fq "\"cepBundleId\":\"$CEP_ID\"" "$RECEIPT_FILE" || fail "existing RYZE receipt has a different CEP ID"
+  /usr/bin/grep -Fq "\"uxpId\":\"$UXP_ID\"" "$RECEIPT_FILE" || fail "existing RYZE receipt has a different UXP ID"
+  CEP_BACKUP="$DATA_DIR/.cep-backup.$$"
+  [[ ! -e "$CEP_BACKUP" ]] || fail "temporary CEP backup already exists"
+  /bin/mv "$CEP_TARGET" "$CEP_BACKUP"
+fi
+
+/usr/bin/ditto "$HELPER_SOURCE" "$CEP_TARGET"
+CEP_INSTALLED=1
+/usr/sbin/chown -R "$CONSOLE_USER":staff "$CEP_TARGET"
+/usr/bin/find "$CEP_TARGET" -type d -exec /bin/chmod 0755 {} +
+/usr/bin/find "$CEP_TARGET" -type f -exec /bin/chmod 0644 {} +
+log "CEP helper installed at $CEP_TARGET. Startup remains registered by its existing ApplicationActivate manifest event."
+
+INSTALL_TMP="$(/usr/bin/mktemp -d "$DATA_DIR/.installer.XXXXXX")"
+/bin/mkdir -p "$INSTALL_TMP/unpacked"
+/usr/bin/unzip -q "$CCX_SOURCE" -d "$INSTALL_TMP/unpacked"
+[[ -f "$INSTALL_TMP/unpacked/manifest.json" ]] || fail "UXP manifest is missing from CCX"
+[[ -f "$INSTALL_TMP/unpacked/installer-config.json" ]] || fail "UXP pairing placeholder is missing from CCX"
+/usr/bin/grep -Fq "\"id\": \"$UXP_ID\"" "$INSTALL_TMP/unpacked/manifest.json" || fail "UXP bundle ID mismatch"
+/usr/bin/grep -Fq "\"version\": \"$VERSION\"" "$INSTALL_TMP/unpacked/manifest.json" || fail "UXP version mismatch"
+
+/usr/bin/printf '{"schema":1,"build":"%s","port":%s,"token":"%s"}\n' "$VERSION" "$PORT" "$TOKEN" > "$INSTALL_TMP/unpacked/installer-config.json"
+CONFIGURED_CCX="$INSTALL_TMP/RYZE_Caption_Tool.ccx"
+(cd "$INSTALL_TMP/unpacked" && /usr/bin/zip -X -q -r "$CONFIGURED_CCX" . -x '*/.DS_Store')
+/usr/sbin/chown -R "$CONSOLE_USER":staff "$INSTALL_TMP"
+/bin/chmod 0700 "$INSTALL_TMP"
+/bin/chmod 0600 "$CONFIGURED_CCX"
+
+log "Installing UXP through Adobe UPIA into Adobe-managed PluginsStorage."
+if ! run_as_user "$UPIA" --install "$CONFIGURED_CCX" >> "$LOG_FILE" 2>&1; then
+  fail "Adobe UPIA failed to install the UXP package; see $LOG_FILE"
+fi
+UPIA_LIST="$(run_as_user "$UPIA" --list all 2>&1)" || fail "Adobe UPIA could not list installed plugins"
+/usr/bin/printf '%s\n' "$UPIA_LIST" >> "$LOG_FILE"
+/usr/bin/printf '%s\n' "$UPIA_LIST" | /usr/bin/grep -Fq 'RYZE Caption Tool' || fail "UPIA did not list RYZE Caption Tool after installation"
+/usr/bin/printf '%s\n' "$UPIA_LIST" | /usr/bin/grep -Fq "$VERSION" || fail "UPIA did not list RYZE Caption Tool version $VERSION"
+
+RECEIPT_TMP="$DATA_DIR/.receipt.$$"
+/usr/bin/printf '{"schema":1,"version":"%s","uxpId":"%s","cepBundleId":"%s","cepTarget":"%s","helperRoot":"%s"}\n' \
+  "$VERSION" "$UXP_ID" "$CEP_ID" "$CEP_TARGET" "$INSTALL_BASE" > "$RECEIPT_TMP"
+/usr/sbin/chown "$CONSOLE_USER":staff "$RECEIPT_TMP"
+/bin/chmod 0600 "$RECEIPT_TMP"
+/bin/mv -f "$RECEIPT_TMP" "$RECEIPT_FILE"
+
+if [[ -n "$CEP_BACKUP" && -e "$CEP_BACKUP" ]]; then
+  safe_remove_tree "$CEP_BACKUP"
+  CEP_BACKUP=""
+fi
+SUCCESS=1
+log "Installed RYZE Caption Tool $VERSION. Restart Premiere and open Window > UXP Plugins > RYZE Caption Tool."
+exit 0

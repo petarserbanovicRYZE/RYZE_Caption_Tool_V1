@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "type": "cep-bridge-helper",
+  "uxpId": "com.ryze.captiontool.v1.uxp",
+  "cepBundleId": "com.ryze.captiontool.v1.bridge",
+  "cepPanelId": "com.ryze.captiontool.v1.bridge.panel",
+  "version": "1.0.7",
+  "port": 48771,
+  "startup": "com.adobe.csxs.events.ApplicationActivate",
+  "nativeBinary": false
+}

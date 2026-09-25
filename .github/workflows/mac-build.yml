@@ -1,0 +1,61 @@
+name: Mac Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos-installer:
+    name: Build unsigned macOS installer
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate macOS runner and build files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          command -v pkgbuild
+          command -v productbuild
+          test -f mac-builder/build.sh
+          test -f mac-builder/ci-check.sh
+          test -f mac-builder/package/scripts/preinstall
+          test -f mac-builder/package/scripts/postinstall
+
+      - name: Make macOS scripts executable
+        shell: bash
+        run: |
+          chmod +x mac-builder/build.sh
+          chmod +x mac-builder/ci-check.sh
+          chmod +x mac-builder/verify-mac-build.sh
+          chmod +x mac-builder/package/scripts/preinstall
+          chmod +x mac-builder/package/scripts/postinstall
+
+      - name: Check macOS build inputs
+        shell: bash
+        run: ./mac-builder/ci-check.sh
+
+      - name: Build macOS installer
+        shell: bash
+        run: ./mac-builder/build.sh
+
+      - name: Verify generated installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s mac-builder/output/RYZE_Caption_Tool_Mac.pkg
+          ./mac-builder/verify-mac-build.sh mac-builder/output/RYZE_Caption_Tool_Mac.pkg
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: RYZE_Caption_Tool_Mac
+          path: mac-builder/output/RYZE_Caption_Tool_Mac.pkg
+          if-no-files-found: error
+          retention-days: 14
