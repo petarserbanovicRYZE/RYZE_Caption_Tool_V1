@@ -1,3 +1,4 @@
 /.github/workflows/*.yml text eol=lf
 /mac-builder/*.sh text eol=lf
 /mac-builder/package/scripts/* text eol=lf
+/helper/launch-mac-helper text eol=lf

@@ -8,5 +8,8 @@
   "port": 48771,
   "startup": "com.adobe.csxs.events.ApplicationActivate",
   "launcher": "helper/macos-launcher.js",
+  "process": "helper/macos-helper-process.js",
+  "launchMethod": "child_process.spawn",
+  "reconnectCommand": "/Library/Application Support/RYZE/CaptionToolV1/bin/ryze-caption-helper",
   "nativeBinary": false
 }

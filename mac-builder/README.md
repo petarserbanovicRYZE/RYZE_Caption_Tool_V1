@@ -2,7 +2,7 @@
 
 This is a separate macOS packaging path for the existing RYZE Caption Tool V1. It does not call or modify `BUILD.cmd`, `builder/Build.ps1`, Inno Setup, or the Windows installer scripts.
 
-The helper is the existing CEP extension, not a native executable. On macOS, Premiere starts the CEP extension through `com.adobe.csxs.events.ApplicationActivate`; `helper/macos-launcher.js` then runs inside Premiere's CEP Node context, loads the existing engine and server modules, and starts the authenticated loopback service on `127.0.0.1:48771`. Keeping the bootstrap in CEP is required because the engine calls Premiere ExtendScript. No LaunchAgent or LaunchDaemon is required.
+The macOS helper uses two cooperating parts. CEP retains the existing conversion engine because it calls Premiere ExtendScript. `helper/macos-launcher.js` creates a private per-user Unix-socket bridge and uses Node `child_process.spawn` to start `helper/macos-helper-process.js`, which owns the authenticated loopback service on `127.0.0.1:48771`. No LaunchAgent or LaunchDaemon is installed.
 
 ## Requirements
 
@@ -12,6 +12,7 @@ Build the final package on macOS with:
 - Xcode Command Line Tools, providing `pkgbuild`, `productbuild`, `pkgutil`, `codesign`, and `security`.
 - The standard macOS `zip`, `unzip`, `openssl`, `sed`, and shell tools.
 - Adobe Creative Cloud Desktop on the target Mac. Its Unified Plugin Installer Agent (UPIA) is required during installation.
+- Node.js on the target Mac for the current internal test build. The installer records the absolute runtime path and stops with a clear error if Node is unavailable. No fake macOS binary is generated or bundled.
 - Premiere Pro 26.5.1 for the V1 runtime that the extension currently gates and has been tested against.
 - Optional: a current macOS `ZXPSignCmd`, CEP `.p12`, and password for a production-loadable signed CEP payload.
 - Optional: Apple `Developer ID Installer` and `Developer ID Application` identities in the build Mac keychain.
@@ -36,7 +37,7 @@ mac-builder/output/RYZE_Caption_Tool_Mac.pkg
 
 Every run validates the current source IDs, version, port, pairing placeholder, MOGRT presence, and macOS config fallback. It then refreshes `payload/UXP` and `payload/CEP` from the authoritative `uxp/` and `cep/` source folders. This avoids maintaining a divergent application copy.
 
-The Mac CEP payload also includes the authoritative `helper/macos-launcher.js`. The ordinary Windows build still packages `cep/` directly, so it does not include or invoke this Mac-only bootstrap.
+The Mac CEP payload also includes the authoritative `helper/macos-launcher.js` and `helper/macos-helper-process.js`. The package installs the reconnect command at `/Library/Application Support/RYZE/CaptionToolV1/bin/ryze-caption-helper`. The ordinary Windows build still packages `cep/` directly, so it does not include or invoke any of these Mac-only files.
 
 ## Building Mac installer without owning a Mac
 
@@ -101,7 +102,7 @@ export APPLICATION_SIGNING_IDENTITY="Developer ID Application: Company Name (TEA
 ./mac-builder/build.sh
 ```
 
-The V1 helper is JavaScript/CEP and contains no Mach-O binary or `.app`, so there is currently nothing legitimate to sign with `Developer ID Application`. The build reports that fact and does not manufacture a binary. If a real native helper is added later under the helper payload, the build signs discovered `.app` bundles and Mach-O files before `pkgbuild`.
+The V1 helper is JavaScript plus a shell reconnect command and contains no Mach-O binary or `.app`, so there is currently nothing legitimate to sign with `Developer ID Application`. The build reports that fact and does not manufacture a binary. If a real native helper or bundled Node runtime is added later, the build can sign discovered `.app` bundles and Mach-O files before `pkgbuild`.
 
 For public distribution, sign first and then notarize/staple using your Apple account or a keychain profile, for example:
 
@@ -129,19 +130,21 @@ The installer refuses to continue while Premiere is running or when no normal de
 ## Installed locations
 
 - System helper/package source: `/Library/Application Support/RYZE/CaptionToolV1/`
+- Reconnect command: `/Library/Application Support/RYZE/CaptionToolV1/bin/ryze-caption-helper`
 - CEP helper runtime: `~/Library/Application Support/Adobe/CEP/extensions/com.ryze.captiontool.v1.bridge/`
 - Adobe UXP storage base: `~/Library/Application Support/Adobe/UXP/PluginsStorage/`
 - RYZE config/session data: `~/Library/Application Support/RYZE/CaptionToolV1/`
 - Pairing config: `~/Library/Application Support/RYZE/CaptionToolV1/connection.json`
 - Install receipt: `~/Library/Application Support/RYZE/CaptionToolV1/installed-mac.json`
+- Recorded Node runtime: `~/Library/Application Support/RYZE/CaptionToolV1/runtime-mac.json`
 - Installer log: `~/Library/Application Support/RYZE/CaptionToolV1/installer-mac.log`
 - Helper log: the macOS temporary directory, file `RYZE_Caption_Tool_V1_bridge.txt`
 
-The helper log records `HELPER_LAUNCHER_PATH`, `HELPER_LAUNCH_ATTEMPTED`, `HELPER_PROCESS_STARTED`, and `HELPER_PORT_LISTENING`. These entries distinguish a missing CEP startup from a listener or config failure without exposing the pairing token.
+The helper log records `HELPER_LAUNCHER_PATH`, `HELPER_LAUNCH_METHOD`, `HELPER_LAUNCH_ATTEMPTED`, `HELPER_PROCESS_STARTED`, and `HELPER_PORT_LISTENING`. These entries distinguish a missing CEP engine bridge, failed process spawn, and failed port listener without exposing the pairing token.
 
-Opening Premiere triggers the CEP helper automatically through the existing manifest event. If the first connection is not ready, the UXP panel continues its read-only retry loop. The **Reconnect helper** button on macOS asks UXP for permission to reactivate the running Premiere application, which fires `ApplicationActivate`, and then retries `127.0.0.1:48771`. Adobe requires user consent for this `shell.openPath()` action; declining it leaves the panel disconnected and is reported in the bug report. Windows does not invoke this path.
+Opening Premiere loads the hidden CEP engine bridge through the existing manifest lifecycle event. The bridge directly spawns the separate Node HTTP process; it does not try to launch Premiere. If the first connection is not ready, the UXP panel continues its read-only retry loop. The **Reconnect helper** button asks UXP for permission to run the dedicated no-extension reconnect command, then retries `127.0.0.1:48771`. Adobe requires user consent for this `shell.openPath()` action. Windows does not invoke this path.
 
-`server.js` remains a factory module and is not a command-line entry point. Running `node server.js` directly is therefore not a valid helper test. The macOS entry point is loaded by the CEP bridge at `~/Library/Application Support/Adobe/CEP/extensions/com.ryze.captiontool.v1.bridge/helper/macos-launcher.js`.
+`server.js` remains a factory module and is not a command-line entry point. Running `node server.js` directly is therefore not a valid helper test. The Mac child entry is `helper/macos-helper-process.js`; `macos-launcher.js` starts it with the Node path recorded by the installer.
 
 UXP is installed through Adobe UPIA instead of guessing Adobe’s private `PluginsStorage` subdirectory structure. UPIA owns registration and final placement; the installer creates the documented base directory and verifies that UPIA lists RYZE Caption Tool `1.0.7` after install.
 

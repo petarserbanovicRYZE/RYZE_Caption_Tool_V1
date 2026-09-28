@@ -7,6 +7,7 @@ CEP_ID="com.ryze.captiontool.v1.bridge"
 PORT="48771"
 INSTALL_BASE="/Library/Application Support/RYZE/CaptionToolV1"
 HELPER_SOURCE="$INSTALL_BASE/helper"
+HELPER_COMMAND="$INSTALL_BASE/bin/ryze-caption-helper"
 CCX_SOURCE="$INSTALL_BASE/packages/RYZE_Caption_Tool.ccx"
 UPIA="/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/macOS/UnifiedPluginInstallerAgent"
 
@@ -27,6 +28,7 @@ USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | /us
 
 DATA_DIR="$USER_HOME/Library/Application Support/RYZE/CaptionToolV1"
 CONFIG_FILE="$DATA_DIR/connection.json"
+RUNTIME_FILE="$DATA_DIR/runtime-mac.json"
 RECEIPT_FILE="$DATA_DIR/installed-mac.json"
 LOG_FILE="$DATA_DIR/installer-mac.log"
 CEP_PARENT="$USER_HOME/Library/Application Support/Adobe/CEP/extensions"
@@ -95,10 +97,36 @@ run_as_user() {
 [[ -f "$HELPER_SOURCE/CSXS/manifest.xml" ]] || fail "CEP manifest is missing"
 [[ -f "$HELPER_SOURCE/bridge.js" ]] || fail "CEP helper entry point is missing"
 [[ -f "$HELPER_SOURCE/helper/macos-launcher.js" ]] || fail "macOS helper launcher is missing"
+[[ -f "$HELPER_SOURCE/helper/macos-helper-process.js" ]] || fail "macOS helper child process is missing"
+[[ -x "$HELPER_COMMAND" ]] || fail "macOS helper launch command is missing or not executable"
 [[ -f "$CCX_SOURCE" ]] || fail "UXP CCX payload is missing"
 [[ -x "$UPIA" ]] || fail "Adobe UPIA was not found. Install or update Creative Cloud Desktop, then retry"
 /usr/bin/grep -Fq "ExtensionBundleId=\"$CEP_ID\"" "$HELPER_SOURCE/CSXS/manifest.xml" || fail "CEP bundle ID mismatch"
 /usr/bin/grep -Fq "ExtensionBundleVersion=\"$VERSION\"" "$HELPER_SOURCE/CSXS/manifest.xml" || fail "CEP version mismatch"
+
+NODE_PATH=""
+for candidate in \
+  "/opt/homebrew/bin/node" \
+  "/usr/local/bin/node" \
+  "/usr/bin/node" \
+  "$USER_HOME/.volta/bin/node"; do
+  if [[ -x "$candidate" ]]; then
+    NODE_PATH="$candidate"
+    break
+  fi
+done
+if [[ -z "$NODE_PATH" ]]; then
+  NODE_PATH="$(run_as_user /bin/zsh -lc 'command -v node 2>/dev/null' | /usr/bin/tail -n 1 || true)"
+fi
+[[ "$NODE_PATH" == /* && -x "$NODE_PATH" && "$NODE_PATH" != *'"'* && "$NODE_PATH" != *$'\n'* ]] || fail "Node.js was not found. Install Node.js for this internal Mac build, then retry."
+run_as_user "$NODE_PATH" --version >> "$LOG_FILE" 2>&1 || fail "Configured Node.js runtime could not start"
+
+RUNTIME_TMP="$DATA_DIR/.runtime.$$"
+/usr/bin/printf '{"schema":1,"build":"%s","nodePath":"%s"}\n' "$VERSION" "$NODE_PATH" > "$RUNTIME_TMP"
+/usr/sbin/chown "$CONSOLE_USER":staff "$RUNTIME_TMP"
+/bin/chmod 0600 "$RUNTIME_TMP"
+/bin/mv -f "$RUNTIME_TMP" "$RUNTIME_FILE"
+log "Mac helper runtime prepared for direct child_process spawning."
 
 TOKEN=""
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -134,8 +162,9 @@ CEP_INSTALLED=1
 /usr/sbin/chown -R "$CONSOLE_USER":staff "$CEP_TARGET"
 /usr/bin/find "$CEP_TARGET" -type d -exec /bin/chmod 0755 {} +
 /usr/bin/find "$CEP_TARGET" -type f -exec /bin/chmod 0644 {} +
-log "CEP helper installed at $CEP_TARGET. Startup remains registered by its existing ApplicationActivate manifest event."
+log "CEP engine bridge installed at $CEP_TARGET. The helper HTTP service starts with Node child_process.spawn."
 log "Helper launcher path: $CEP_TARGET/helper/macos-launcher.js"
+log "Reconnect command path: $HELPER_COMMAND"
 
 INSTALL_TMP="$(/usr/bin/mktemp -d "$DATA_DIR/.installer.XXXXXX")"
 /bin/mkdir -p "$INSTALL_TMP/unpacked"

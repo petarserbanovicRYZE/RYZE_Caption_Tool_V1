@@ -22,12 +22,14 @@ function diagnostic(line){emit(report+'\n'+line);}
 async function launchMacHelper(){
  const applicationPath=uxp.host&&uxp.host.applicationPath?String(uxp.host.applicationPath):'';
  if(!/\.app\/?$/i.test(applicationPath))return;
- diagnostic('HELPER_LAUNCHER_PATH = ~/Library/Application Support/Adobe/CEP/extensions/com.ryze.captiontool.v1.bridge/helper/macos-launcher.js');
- diagnostic('HELPER_LAUNCH_ATTEMPTED = ApplicationActivate');
+ const launcherPath='/Library/Application Support/RYZE/CaptionToolV1/bin/ryze-caption-helper';
+ diagnostic('HELPER_LAUNCHER_PATH = '+launcherPath);
+ diagnostic('HELPER_LAUNCH_METHOD = UXP shell.openPath executable -> Node child_process.spawn');
+ diagnostic('HELPER_LAUNCH_ATTEMPTED = true');
  status.textContent='Starting RYZE helper…';
- const result=await uxp.shell.openPath(applicationPath,'Reactivate Premiere so the RYZE helper can start.');
+ const result=await uxp.shell.openPath(launcherPath,'Start the local RYZE helper so the panel can reconnect.');
  if(result)throw Error(result);
- diagnostic('HELPER_PROCESS_START_REQUESTED = Premiere reactivated');
+ diagnostic('HELPER_PROCESS_START_REQUESTED = true');
 }
 async function connectAutomatically(launchHelper){
  if(busy)return;busy=true;blocked=true;buttons();status.textContent='Connecting…';

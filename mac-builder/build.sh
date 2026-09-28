@@ -9,6 +9,8 @@ PROJECT_ROOT="$(cd "$MAC_DIR/.." && pwd)"
 SOURCE_UXP="$PROJECT_ROOT/uxp"
 SOURCE_CEP="$PROJECT_ROOT/cep"
 SOURCE_MAC_LAUNCHER="$PROJECT_ROOT/helper/macos-launcher.js"
+SOURCE_MAC_PROCESS="$PROJECT_ROOT/helper/macos-helper-process.js"
+SOURCE_MAC_COMMAND="$PROJECT_ROOT/helper/launch-mac-helper"
 PAYLOAD_UXP="$MAC_DIR/payload/UXP"
 PAYLOAD_CEP="$MAC_DIR/payload/CEP"
 PAYLOAD_HELPER="$MAC_DIR/payload/helper"
@@ -84,6 +86,8 @@ need_file "$SOURCE_CEP/CSXS/manifest.xml" "CEP manifest"
 need_file "$SOURCE_CEP/bridge.js" "CEP helper entry point"
 need_file "$SOURCE_CEP/server.js" "CEP loopback service"
 need_file "$SOURCE_MAC_LAUNCHER" "macOS helper launcher"
+need_file "$SOURCE_MAC_PROCESS" "macOS helper child process"
+need_file "$SOURCE_MAC_COMMAND" "macOS helper launch command"
 need_file "$SOURCE_CEP/assets/mogrts/RYZE_Box_V3.mogrt" "V3 MOGRT"
 need_file "$SOURCE_CEP/assets/mogrts/RYZE_Box_V5.mogrt" "V5 MOGRT"
 need_file "$SOURCE_CEP/assets/mogrts/RYZE_Stroke_V1.mogrt" "Stroke MOGRT"
@@ -108,8 +112,9 @@ grep -Fq "server.listen(48771,'127.0.0.1')" "$SOURCE_CEP/server.js" || fail "CEP
 grep -Fq "env.APPDATA" "$SOURCE_CEP/bridge.js" || fail "Windows config discovery was removed"
 grep -Fq "'Library','Application Support'" "$SOURCE_CEP/bridge.js" || fail "macOS config discovery is missing"
 grep -Fq "helper','macos-launcher.js" "$SOURCE_CEP/bridge.js" || fail "CEP does not load the macOS helper launcher"
-grep -Fq 'HELPER_PORT_LISTENING' "$SOURCE_MAC_LAUNCHER" || fail "macOS helper listening diagnostic is missing"
-grep -Fq '".app"' "$SOURCE_UXP/manifest.json" || fail "UXP macOS launch permission is missing"
+grep -Fq 'HELPER_PORT_LISTENING' "$SOURCE_MAC_PROCESS" || fail "macOS child listening diagnostic is missing"
+grep -Fq 'childProcess.spawn' "$SOURCE_MAC_LAUNCHER" || fail "macOS helper does not use direct child_process spawning"
+grep -Fq '        ""' "$SOURCE_UXP/manifest.json" || fail "UXP executable launch permission is missing"
 
 HELPER_UXP_ID="$(json_string uxpId "$PAYLOAD_HELPER/helper-info.json")"
 HELPER_CEP_ID="$(json_string cepBundleId "$PAYLOAD_HELPER/helper-info.json")"
@@ -159,6 +164,7 @@ MAC_CEP_SOURCE="$WORK_DIR/cep-source"
 mkdir -p "$MAC_CEP_SOURCE/helper"
 cp -R "$SOURCE_CEP/." "$MAC_CEP_SOURCE/"
 cp "$SOURCE_MAC_LAUNCHER" "$MAC_CEP_SOURCE/helper/macos-launcher.js"
+cp "$SOURCE_MAC_PROCESS" "$MAC_CEP_SOURCE/helper/macos-helper-process.js"
 
 sync_tree "$SOURCE_UXP" "$PAYLOAD_UXP"
 
@@ -215,13 +221,15 @@ need_file "$UXP_CCX" "generated UXP CCX"
 
 STAGE_ROOT="$WORK_DIR/root"
 INSTALL_BASE="$STAGE_ROOT/Library/Application Support/RYZE/CaptionToolV1"
-mkdir -p "$INSTALL_BASE/helper" "$INSTALL_BASE/packages" "$INSTALL_BASE/metadata"
+mkdir -p "$INSTALL_BASE/helper" "$INSTALL_BASE/bin" "$INSTALL_BASE/packages" "$INSTALL_BASE/metadata"
 cp -R "$PAYLOAD_CEP/." "$INSTALL_BASE/helper/"
+cp "$SOURCE_MAC_COMMAND" "$INSTALL_BASE/bin/ryze-caption-helper"
 cp "$UXP_CCX" "$INSTALL_BASE/packages/RYZE_Caption_Tool.ccx"
 cp "$PAYLOAD_HELPER/helper-info.json" "$INSTALL_BASE/metadata/helper-info.json"
 
 find "$STAGE_ROOT" -type d -exec chmod 0755 {} +
 find "$STAGE_ROOT" -type f -exec chmod 0644 {} +
+chmod 0755 "$INSTALL_BASE/bin/ryze-caption-helper"
 
 # Preserve executable mode for any real native helper added in a later release.
 while IFS= read -r -d '' binary; do

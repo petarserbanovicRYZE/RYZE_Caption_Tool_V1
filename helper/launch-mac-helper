@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+ROOT="/Library/Application Support/RYZE/CaptionToolV1/helper"
+DATA_DIR="$HOME/Library/Application Support/RYZE/CaptionToolV1"
+RUNTIME="$DATA_DIR/runtime-mac.json"
+NODE_PATH="$(/usr/bin/sed -nE 's/.*"nodePath"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$RUNTIME" | /usr/bin/head -n 1)"
+
+[[ -n "$NODE_PATH" && "$NODE_PATH" == /* && -x "$NODE_PATH" ]] || exit 1
+exec "$NODE_PATH" "$ROOT/helper/macos-launcher.js" "$ROOT" "$DATA_DIR"
