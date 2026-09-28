@@ -17,11 +17,13 @@ async function request(path,body,timeoutMs=60000){
 const api={command:async(op,args)=>{if(!epoch)epoch=(await probe()).epoch;const body={epoch,requestID:client+'_'+(++serial),op,args};try{return(await request('/command',body)).state;}catch(e){if(String(e).includes('Connection timeout'))return(await request('/command',body)).state;throw e;}}};
 const workflow=require('./workflow.js')(api,require('./visibility.js')(require('premierepro')),emit);
 async function probe(){const r=await request('/status',null,2000);if(r.build!=='1.0.7')throw Error('Helper version mismatch. Close Premiere and run the 1.0.7 Setup.');return r;}
-async function attach(){epoch=(await probe()).epoch;const state=await workflow.attach();complete=state.converted;blocked=false;status.textContent=complete?'Ready. Your last conversion is available for Undo.':'Ready. Choose a style and convert.';}
+async function attach(){epoch=(await probe()).epoch;const state=await workflow.attach();complete=state.converted;blocked=false;status.textContent=complete?'Ready. Your last conversion is available for Undo.':'Ready. Choose a style and convert.';
+ if(isMac()){diagnostic('HELPER_PORT_REACHABLE = 127.0.0.1:48771');try{const health=await request('/mac-health',null,2000);diagnostic('HELPER_PROCESS_STARTED = true; PID = '+health.pid);}catch(ignore){}}
+}
 function diagnostic(line){emit(report+'\n'+line);}
+function isMac(){return /\.app(?:\/|$)/i.test(String(uxp.host&&uxp.host.applicationPath||''));}
 async function launchMacHelper(){
- const applicationPath=uxp.host&&uxp.host.applicationPath?String(uxp.host.applicationPath):'';
- if(!/\.app\/?$/i.test(applicationPath))return;
+ if(!isMac())return;
  const launcherPath='/Library/Application Support/RYZE/CaptionToolV1/bin/ryze-caption-helper';
  diagnostic('HELPER_LAUNCHER_PATH = '+launcherPath);
  diagnostic('HELPER_LAUNCH_METHOD = UXP shell.openPath executable -> Node child_process.spawn');
@@ -58,4 +60,4 @@ save.addEventListener('click',async()=>{
   }
  }catch(e){$('reportStatus').textContent='Could not save the report. Try again.';}finally{reportBusy=false;buttons();}
 });
-connectAutomatically(false);
+connectAutomatically(isMac());

@@ -12,7 +12,7 @@ Build the final package on macOS with:
 - Xcode Command Line Tools, providing `pkgbuild`, `productbuild`, `pkgutil`, `codesign`, and `security`.
 - The standard macOS `zip`, `unzip`, `openssl`, `sed`, and shell tools.
 - Adobe Creative Cloud Desktop on the target Mac. Its Unified Plugin Installer Agent (UPIA) is required during installation.
-- Node.js on the target Mac for the current internal test build. The installer records the absolute runtime path and stops with a clear error if Node is unavailable. No fake macOS binary is generated or bundled.
+- Internet access on the build runner to download the official Node.js 22.23.3 distributions. SHA-256 checksums and upstream code signatures are verified. Intel and Apple Silicon runtimes and their license files are included in the package; teammates do not install Node separately.
 - Premiere Pro 26.5.1 for the V1 runtime that the extension currently gates and has been tested against.
 - Optional: a current macOS `ZXPSignCmd`, CEP `.p12`, and password for a production-loadable signed CEP payload.
 - Optional: Apple `Developer ID Installer` and `Developer ID Application` identities in the build Mac keychain.
@@ -55,12 +55,12 @@ The workflow verifies that it is running on Darwin and that `pkgbuild` and `prod
 The existing environment variables remain the signing placeholders for a future certificate-enabled GitHub workflow:
 
 - `INSTALLER_SIGNING_IDENTITY` — `Developer ID Installer` identity installed in the runner keychain.
-- `APPLICATION_SIGNING_IDENTITY` — `Developer ID Application` identity, needed only if a native helper is added.
+- `APPLICATION_SIGNING_IDENTITY` — `Developer ID Application` identity for signing the bundled native runtimes, preserving their V8 entitlements.
 - Notarization — run `xcrun notarytool` and `xcrun stapler` after signing, using credentials imported from encrypted GitHub Actions secrets.
 
 Do not set signing identity variables until the corresponding certificate and private key have been securely imported into the temporary runner keychain. The default workflow intentionally leaves all signing and notarization inputs unset.
 
-With no certificates or signed CEP input, the command builds an unsigned package containing an unsigned CEP folder for internal testing. A `.pkg` can be unsigned, but a production CEP installation normally needs a valid CEP/ZXP signature; debug-mode loading is not enabled by this installer.
+With no certificates or signed CEP input, the command builds an unsigned package containing an unsigned CEP folder for internal testing. The installer enables `PlayerDebugMode=1` in the signed-in user's `com.adobe.CSXS.12` preferences, as documented by Adobe. This permits unsigned CEP 12 extensions for that user, including extensions other than RYZE. A signed CEP package does not change this preference. Public distribution requires valid CEP signing and Apple signing/notarization. To disable internal test loading later, run `defaults delete com.adobe.CSXS.12 PlayerDebugMode` and restart Premiere; an unsigned RYZE bridge will then no longer load.
 
 To require a signed CEP and stop instead of producing an internal payload:
 
@@ -102,7 +102,7 @@ export APPLICATION_SIGNING_IDENTITY="Developer ID Application: Company Name (TEA
 ./mac-builder/build.sh
 ```
 
-The V1 helper is JavaScript plus a shell reconnect command and contains no Mach-O binary or `.app`, so there is currently nothing legitimate to sign with `Developer ID Application`. The build reports that fact and does not manufacture a binary. If a real native helper or bundled Node runtime is added later, the build can sign discovered `.app` bundles and Mach-O files before `pkgbuild`.
+The helper remains JavaScript plus a shell reconnect command. Its bundled Node runtimes are real upstream-signed Mach-O executables. Without your own certificate, their existing signatures are verified and preserved. With `APPLICATION_SIGNING_IDENTITY`, the builder signs these executables before `pkgbuild`, preserving their entitlements. End-to-end notarization still requires testing with your Apple certificates.
 
 For public distribution, sign first and then notarize/staple using your Apple account or a keychain profile, for example:
 
@@ -137,10 +137,13 @@ The installer refuses to continue while Premiere is running or when no normal de
 - Pairing config: `~/Library/Application Support/RYZE/CaptionToolV1/connection.json`
 - Install receipt: `~/Library/Application Support/RYZE/CaptionToolV1/installed-mac.json`
 - Recorded Node runtime: `~/Library/Application Support/RYZE/CaptionToolV1/runtime-mac.json`
+- Bundled Node: `/Library/Application Support/RYZE/CaptionToolV1/runtime/{arm64,x64}/bin/node`
 - Installer log: `~/Library/Application Support/RYZE/CaptionToolV1/installer-mac.log`
 - Helper log: the macOS temporary directory, file `RYZE_Caption_Tool_V1_bridge.txt`
 
-The helper log records `HELPER_LAUNCHER_PATH`, `HELPER_LAUNCH_METHOD`, `HELPER_LAUNCH_ATTEMPTED`, `HELPER_PROCESS_STARTED`, and `HELPER_PORT_LISTENING`. These entries distinguish a missing CEP engine bridge, failed process spawn, and failed port listener without exposing the pairing token.
+The helper log records `HELPER_LAUNCHER_PATH`, `HELPER_LAUNCH_METHOD`, `HELPER_LAUNCH_ATTEMPTED`, `HELPER_PROCESS_STARTED`, and `HELPER_PORT_LISTENING`. The panel also records the reachable port and PID after successful connection. These entries distinguish a missing CEP engine bridge, failed process spawn, and failed port listener without exposing the pairing token.
+
+The engine socket has a stable path in a user-owned `0700` directory under `/tmp`; it does not depend on the environment's `TMPDIR`. A second CEP instance never takes over a live socket. Each engine has a unique generation, and each HTTP helper has a fresh epoch. A CEP restart rejects commands from the previous engine; a child restart rejects commands from the previous HTTP session. Commands stay serialized even if a client disconnects. The bridge restarts a crashed child up to three times, and the child exits when the CEP bridge disappears. This does not remove the existing engine's checkpoint/Undo safeguards.
 
 Opening Premiere loads the hidden CEP engine bridge through the existing manifest lifecycle event. The bridge directly spawns the separate Node HTTP process; it does not try to launch Premiere. If the first connection is not ready, the UXP panel continues its read-only retry loop. The **Reconnect helper** button asks UXP for permission to run the dedicated no-extension reconnect command, then retries `127.0.0.1:48771`. Adobe requires user consent for this `shell.openPath()` action. Windows does not invoke this path.
 
@@ -158,7 +161,7 @@ On macOS, verify the final flat package and its expanded payload:
 ./mac-builder/verify-mac-build.sh
 ```
 
-The verifier checks the package filename and contents, component package ID/version, source-to-payload equality, UXP and CEP IDs, config names, helper port, startup event, and expected install paths. It also prints Apple package signature status through `pkgutil`.
+The verifier checks the package filename and contents, component package ID/version, source-to-payload equality, UXP and CEP IDs, config names, helper port, startup event, and expected install paths. It verifies both Node architectures and code signatures and executes the native binary. The Actions run also uses the packaged Node to test real Unix sockets, HTTP authentication, duplicate starts, command deduplication, crash recovery, stale-socket recovery, and shutdown. The engine in this test is a fixture: Adobe UPIA, CEP lifecycle, permission prompts, and MOGRT behavior must still be tested inside Premiere on a teammate Mac. It also prints Apple package signature status through `pkgutil`.
 
 For source/payload validation without a `.pkg`:
 

@@ -191,6 +191,22 @@ cmp -s "$SOURCE_MAC_LAUNCHER" "$EXPANDED_MAC_LAUNCHER" || fail "packaged macOS h
 cmp -s "$SOURCE_MAC_PROCESS" "$EXPANDED_MAC_PROCESS" || fail "packaged macOS helper child differs from source"
 cmp -s "$SOURCE_MAC_COMMAND" "$EXPANDED_MAC_COMMAND" || fail "packaged macOS reconnect command differs from source"
 [[ -x "$EXPANDED_MAC_COMMAND" ]] || fail "packaged macOS reconnect command is not executable"
+EXPANDED_BASE="$(dirname "$(dirname "$EXPANDED_MAC_COMMAND")")"
+for arch in arm64 x64; do
+  binary="$EXPANDED_BASE/runtime/$arch/bin/node"
+  need_file "$binary"
+  need_file "$EXPANDED_BASE/runtime/$arch/LICENSE"
+  [[ -x "$binary" ]] || fail "Node $arch is not executable"
+  case "$arch" in arm64) expected=arm64 ;; x64) expected=x86_64 ;; esac
+  file "$binary" | grep -q "Mach-O.*$expected" || fail "Wrong architecture for Node $arch"
+  codesign --verify --verbose "$binary"
+done
+native=x64
+if [[ "$(sysctl -in hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then native=arm64; fi
+[[ "$("$EXPANDED_BASE/runtime/$native/bin/node" --version)" == v22.23.3 ]] || fail "Bundled Node version mismatch"
+if [[ "${RYZE_RUNTIME_TEST:-0}" == 1 ]]; then
+  "$EXPANDED_BASE/runtime/$native/bin/node" "$PROJECT_ROOT/diagnostics/test-macos-runtime.js"
+fi
 
 mkdir -p "$EXPAND_DIR/uxp"
 unzip -q "$EXPANDED_UXP_PACKAGE" -d "$EXPAND_DIR/uxp"

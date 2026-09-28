@@ -231,6 +231,10 @@ find "$STAGE_ROOT" -type d -exec chmod 0755 {} +
 find "$STAGE_ROOT" -type f -exec chmod 0644 {} +
 chmod 0755 "$INSTALL_BASE/bin/ryze-caption-helper"
 
+if [[ $PREPARE_ONLY -eq 0 ]]; then
+  bash "$MAC_DIR/bundle-node.sh" "$INSTALL_BASE/runtime"
+fi
+
 # Preserve executable mode for any real native helper added in a later release.
 while IFS= read -r -d '' binary; do
   if file -b "$binary" | grep -q 'Mach-O'; then
@@ -246,10 +250,10 @@ if [[ -n "${APPLICATION_SIGNING_IDENTITY:-}" ]]; then
   SIGNED_APPLICATION_TARGETS=0
   while IFS= read -r -d '' binary; do
     if file -b "$binary" | grep -q 'Mach-O'; then
-      codesign --force --options runtime --timestamp --sign "$APPLICATION_SIGNING_IDENTITY" "$binary"
+      codesign --force --preserve-metadata=entitlements --options runtime --timestamp --sign "$APPLICATION_SIGNING_IDENTITY" "$binary"
       SIGNED_APPLICATION_TARGETS=$((SIGNED_APPLICATION_TARGETS + 1))
     fi
-  done < <(find "$INSTALL_BASE/helper" -type f -print0)
+  done < <(find "$INSTALL_BASE" -type f -print0)
   while IFS= read -r app; do
     [[ -n "$app" ]] || continue
     codesign --force --deep --options runtime --timestamp --sign "$APPLICATION_SIGNING_IDENTITY" "$app"

@@ -19,9 +19,9 @@ function loadNodePath(req,dataDir){
 }
 
 function socketPath(req){
- const path=req('path'),os=req('os'),processModule=req('process');
+ const path=req('path'),processModule=req('process');
  const owner=typeof processModule.getuid==='function'?String(processModule.getuid()):'user';
- return path.join(os.tmpdir(),'ryze-captiontool-v1-'+owner+'.sock');
+ return path.join('/tmp','ryze-captiontool-v1-'+owner,'engine.sock');
 }
 
 function fileLogger(req){
@@ -59,20 +59,32 @@ function startEngineBridge(options){
  const fs=req('fs'),path=req('path'),net=req('net'),processModule=req('process');
  const log=typeof options.log==='function'?options.log:fileLogger(req);
  if((options.platform||processModule.platform)!=='darwin')throw Error('macOS helper launcher requires Darwin');
- const config=loadConfig(req,dataDir);
+ const config=loadConfig(req,dataDir),generation=io.id();
  const engine=req(path.join(root,'engine.js'))(io);
  const bridgePath=options.socketPath||socketPath(req);
- let child=null,closed=false;
-
- if(fs.existsSync(bridgePath)){
-  const stat=fs.lstatSync(bridgePath);
-  if(!stat.isSocket())throw Error('Refusing to replace non-socket helper bridge path');
-  fs.unlinkSync(bridgePath);
+ let child=null,closed=false,ownsSocket=false,busy=false,recovering=false,restarts=0,restartTimer=null;
+ const launch=()=>{
+  if(closed)return;
+  try{
+   child=spawnHelper(req,root,dataDir,log);
+   child.once('exit',(code,signal)=>{
+    log('HELPER_PROCESS_EXIT code='+code+' signal='+signal);
+    if(!closed&&(code!==0||signal)&&restarts<3){restarts++;restartTimer=setTimeout(launch,1000*restarts);}
+   });
+  }catch(error){log('HELPER_PROCESS_ERROR '+String(error));}
+ };
+ if(!options.socketPath){
+  const directory=path.dirname(bridgePath);
+  try{fs.mkdirSync(directory,{mode:0o700});}catch(error){if(error.code!=='EEXIST')throw error;}
+  const stat=fs.lstatSync(directory);
+  if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==processModule.getuid())throw Error('Unsafe helper socket directory');
+  fs.chmodSync(directory,0o700);
  }
 
  const bridge=net.createServer(socket=>{
   let raw='',handled=false;
   socket.setEncoding('utf8');
+  socket.setTimeout(5000,()=>socket.destroy());
   socket.on('data',chunk=>{
    if(handled)return;
    raw+=chunk;
@@ -83,28 +95,54 @@ function startEngineBridge(options){
    try{
     const request=JSON.parse(raw.slice(0,newline));
     if(request.token!==config.token)throw Error('Unauthorized bridge request');
-    if(request.type==='ping')return reply(socket,{ok:true,build:BUILD});
+    if(request.type==='ping')return reply(socket,{ok:true,build:BUILD,generation,state:engine.state()});
+    if(request.generation!==generation)throw Error('CEP engine session changed; refusing replay');
     if(request.type!=='dispatch'||!/^[a-zA-Z0-9_-]{8,96}$/.test(request.id||''))throw Error('Invalid bridge request');
-    Promise.resolve(engine.dispatch(request.op,request.args)).then(
+    if(busy)throw Error('Another engine command is still running');
+    busy=true;
+    socket.setTimeout(0);
+    Promise.resolve().then(()=>engine.dispatch(request.op,request.args)).then(
      state=>reply(socket,{ok:true,state}),
      error=>reply(socket,{ok:false,error:String(error),state:engine.state()})
-    );
+    ).finally(()=>{busy=false;});
    }catch(error){reply(socket,{ok:false,error:String(error)});}
   });
   socket.on('error',error=>log('HELPER_ENGINE_CLIENT_ERROR '+String(error)));
  });
- bridge.on('error',error=>log('HELPER_ENGINE_BRIDGE_ERROR '+String(error)));
- bridge.listen(bridgePath,()=>{
+ const listen=()=>bridge.listen(bridgePath);
+ bridge.on('error',error=>{
+  log('HELPER_ENGINE_BRIDGE_ERROR '+String(error));
+  if(error.code!=='EADDRINUSE'||recovering||closed)return;
+  recovering=true;
+  // An active owner must never be unlinked by a second CEP instance.
+  const probe=net.createConnection({path:bridgePath});
+  probe.setTimeout(1000,()=>probe.destroy());
+  probe.once('connect',()=>{log('HELPER_ENGINE_ALREADY_RUNNING');probe.destroy();});
+  probe.once('error',probeError=>{
+   if(!['ECONNREFUSED','ENOENT'].includes(probeError.code)||closed)return;
+   try{
+    if(fs.existsSync(bridgePath)){
+     if(!fs.lstatSync(bridgePath).isSocket())throw Error('Refusing to replace non-socket bridge');
+     fs.unlinkSync(bridgePath);
+    }
+    listen();
+   }catch(failure){log('HELPER_ENGINE_RECOVERY_ERROR '+String(failure));}
+  });
+ });
+ bridge.on('listening',()=>{
+  ownsSocket=true;
   try{fs.chmodSync(bridgePath,0o600);}catch(error){log('HELPER_ENGINE_BRIDGE_PERMISSIONS_ERROR '+String(error));}
   log('HELPER_ENGINE_BRIDGE_LISTENING '+bridgePath);
-  if(!closed)child=spawnHelper(req,root,dataDir,log);
+  launch();
  });
+ listen();
 
  return {
   close(){
    closed=true;
+   clearTimeout(restartTimer);
    try{bridge.close();}catch(error){log('HELPER_ENGINE_BRIDGE_CLOSE_ERROR '+String(error));}
-   try{if(fs.existsSync(bridgePath)&&fs.lstatSync(bridgePath).isSocket())fs.unlinkSync(bridgePath);}catch(error){log('HELPER_ENGINE_BRIDGE_CLEANUP_ERROR '+String(error));}
+   try{if(ownsSocket&&fs.existsSync(bridgePath)&&fs.lstatSync(bridgePath).isSocket())fs.unlinkSync(bridgePath);}catch(error){log('HELPER_ENGINE_BRIDGE_CLEANUP_ERROR '+String(error));}
   },
   child:()=>child,
   socketPath:bridgePath

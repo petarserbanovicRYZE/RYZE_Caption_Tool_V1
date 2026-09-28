@@ -11,7 +11,7 @@ const start=require('../helper/macos-helper-process');
  const net={createConnection:({path:file})=>{
   assert.equal(file,'/tmp/ryze-test.sock');
   const socket=new EventEmitter();socket.destroyed=false;socket.setEncoding=()=>{};socket.setTimeout=()=>{};socket.destroy=()=>{socket.destroyed=true;};
-  socket.write=raw=>{requestCount++;const request=JSON.parse(raw);assert.equal(request.token,token);const response=request.type==='ping'?{ok:true,build:'1.0.7'}:{ok:true,state:{phase:'ready',op:request.op}};setImmediate(()=>socket.emit('data',JSON.stringify(response)+'\n'));};
+  socket.write=raw=>{requestCount++;const request=JSON.parse(raw);assert.equal(request.token,token);if(request.type==='dispatch')assert.equal(request.generation,'c'.repeat(32));const response=request.type==='ping'?{ok:true,build:'1.0.7',generation:'c'.repeat(32),state:{phase:'converted'}}:{ok:true,state:{phase:'ready',op:request.op}};setImmediate(()=>socket.emit('data',JSON.stringify(response)+'\n'));};
   setImmediate(()=>socket.emit('connect'));return socket;
  }};
  const server=new EventEmitter();server.close=callback=>callback&&callback();
@@ -22,6 +22,7 @@ const start=require('../helper/macos-helper-process');
  };
  const result=await start({require:req,root:'/extension',dataDir:'/data',socketPath:'/tmp/ryze-test.sock',platform:'darwin',log:value=>logs.push(value)});
  assert.equal(result,server);server.emit('listening');
+ assert.equal(proxyEngine.state().phase,'converted','Restored engine state must be available before any command');
  assert.equal((await proxyEngine.dispatch('status',{})).phase,'ready');
  assert.equal(proxyEngine.state().op,'status');
  assert(logs.includes('HELPER_PROCESS_STARTED pid=8442'));

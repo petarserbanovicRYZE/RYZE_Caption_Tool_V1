@@ -20,7 +20,7 @@ case "$CONSOLE_USER" in
 esac
 
 CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER")"
-USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | /usr/bin/awk '{print $2}')"
+USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | /usr/bin/sed 's/^NFSHomeDirectory: //')"
 [[ -n "$USER_HOME" && -d "$USER_HOME" ]] || {
   /usr/bin/printf 'RYZE postinstall: could not resolve the home folder for %s.\n' "$CONSOLE_USER" >&2
   exit 1
@@ -104,21 +104,10 @@ run_as_user() {
 /usr/bin/grep -Fq "ExtensionBundleId=\"$CEP_ID\"" "$HELPER_SOURCE/CSXS/manifest.xml" || fail "CEP bundle ID mismatch"
 /usr/bin/grep -Fq "ExtensionBundleVersion=\"$VERSION\"" "$HELPER_SOURCE/CSXS/manifest.xml" || fail "CEP version mismatch"
 
-NODE_PATH=""
-for candidate in \
-  "/opt/homebrew/bin/node" \
-  "/usr/local/bin/node" \
-  "/usr/bin/node" \
-  "$USER_HOME/.volta/bin/node"; do
-  if [[ -x "$candidate" ]]; then
-    NODE_PATH="$candidate"
-    break
-  fi
-done
-if [[ -z "$NODE_PATH" ]]; then
-  NODE_PATH="$(run_as_user /bin/zsh -lc 'command -v node 2>/dev/null' | /usr/bin/tail -n 1 || true)"
-fi
-[[ "$NODE_PATH" == /* && -x "$NODE_PATH" && "$NODE_PATH" != *'"'* && "$NODE_PATH" != *$'\n'* ]] || fail "Node.js was not found. Install Node.js for this internal Mac build, then retry."
+NODE_ARCH=x64
+if [[ "$(/usr/sbin/sysctl -in hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then NODE_ARCH=arm64; fi
+NODE_PATH="$INSTALL_BASE/runtime/$NODE_ARCH/bin/node"
+[[ -x "$NODE_PATH" ]] || fail "Bundled Node runtime is missing for $NODE_ARCH. Download the current RYZE installer."
 run_as_user "$NODE_PATH" --version >> "$LOG_FILE" 2>&1 || fail "Configured Node.js runtime could not start"
 
 RUNTIME_TMP="$DATA_DIR/.runtime.$$"
@@ -145,7 +134,7 @@ CONFIG_TMP="$DATA_DIR/.connection.$$"
 log "Per-user pairing config prepared; credential was not logged."
 
 /bin/mkdir -p "$CEP_PARENT" "$UXP_STORAGE"
-/usr/sbin/chown -R "$CONSOLE_USER":staff "$USER_HOME/Library/Application Support/Adobe/CEP"
+/usr/sbin/chown "$CONSOLE_USER":staff "$CEP_PARENT"
 /usr/sbin/chown "$CONSOLE_USER":staff "$USER_HOME/Library/Application Support/Adobe/UXP" "$UXP_STORAGE"
 
 if [[ -e "$CEP_TARGET" ]]; then
@@ -157,8 +146,8 @@ if [[ -e "$CEP_TARGET" ]]; then
   /bin/mv "$CEP_TARGET" "$CEP_BACKUP"
 fi
 
-/usr/bin/ditto "$HELPER_SOURCE" "$CEP_TARGET"
 CEP_INSTALLED=1
+/usr/bin/ditto "$HELPER_SOURCE" "$CEP_TARGET"
 /usr/sbin/chown -R "$CONSOLE_USER":staff "$CEP_TARGET"
 /usr/bin/find "$CEP_TARGET" -type d -exec /bin/chmod 0755 {} +
 /usr/bin/find "$CEP_TARGET" -type f -exec /bin/chmod 0644 {} +
@@ -197,6 +186,12 @@ RECEIPT_TMP="$DATA_DIR/.receipt.$$"
 /bin/chmod 0600 "$RECEIPT_TMP"
 /bin/mv -f "$RECEIPT_TMP" "$RECEIPT_FILE"
 
+if [[ ! -f "$HELPER_SOURCE/META-INF/signatures.xml" ]]; then
+  # This package is explicitly an unsigned internal test build. CEP otherwise
+  # silently refuses to load it on a clean teammate Mac.
+  run_as_user /usr/bin/defaults write com.adobe.CSXS.12 PlayerDebugMode -string 1 || fail "Could not enable unsigned CEP internal testing"
+  log "Internal testing: enabled PlayerDebugMode for CEP 12 for the signed-in user."
+fi
 if [[ -n "$CEP_BACKUP" && -e "$CEP_BACKUP" ]]; then
   safe_remove_tree "$CEP_BACKUP"
   CEP_BACKUP=""

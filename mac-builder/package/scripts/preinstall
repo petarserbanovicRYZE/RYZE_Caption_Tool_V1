@@ -10,6 +10,16 @@ if [[ "$(/usr/bin/uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+if [[ "${3:-/}" != / ]]; then
+  log "Install RYZE on the running macOS system volume."
+  exit 1
+fi
+UPIA="/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/macOS/UnifiedPluginInstallerAgent"
+if [[ ! -x "$UPIA" ]]; then
+  log "Install or update Adobe Creative Cloud Desktop before installing RYZE."
+  exit 1
+fi
+
 CONSOLE_USER="$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true)"
 case "$CONSOLE_USER" in
   ''|root|loginwindow|_mbsetupuser)
@@ -18,7 +28,7 @@ case "$CONSOLE_USER" in
     ;;
 esac
 
-if /usr/bin/pgrep -x 'Adobe Premiere Pro' >/dev/null 2>&1; then
+if /usr/bin/pgrep -x 'Adobe Premiere Pro' >/dev/null 2>&1 || /usr/bin/pgrep -f '/Adobe Premiere Pro[^/]*[.]app/Contents/MacOS/Adobe Premiere Pro' >/dev/null 2>&1; then
   log "Adobe Premiere Pro is running. Save your work, close Premiere, and run the installer again."
   exit 1
 fi

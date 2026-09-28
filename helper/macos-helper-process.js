@@ -3,9 +3,9 @@
 const BUILD='1.0.7',PORT=48771;
 
 function bridgeSocketPath(req){
- const path=req('path'),os=req('os'),processModule=req('process');
+ const path=req('path'),processModule=req('process');
  const owner=typeof processModule.getuid==='function'?String(processModule.getuid()):'user';
- return path.join(os.tmpdir(),'ryze-captiontool-v1-'+owner+'.sock');
+ return path.join('/tmp','ryze-captiontool-v1-'+owner,'engine.sock');
 }
 
 function bridgeRequest(req,bridgePath,token,value,timeoutMs=3000){
@@ -34,7 +34,7 @@ async function waitForBridge(req,bridgePath,token){
  for(let attempt=0;attempt<60;attempt++){
   try{
    const response=await bridgeRequest(req,bridgePath,token,{type:'ping'},1000);
-   if(response.ok&&response.build===BUILD)return;
+   if(response.ok&&response.build===BUILD&&/^[a-f0-9]{32}$/.test(response.generation||''))return response;
    throw Error(response.error||'CEP engine bridge version mismatch');
   }catch(error){last=error;await new Promise(resolve=>setTimeout(resolve,250));}
  }
@@ -51,25 +51,48 @@ async function start(options={}){
  const config=JSON.parse(fs.readFileSync(path.join(dataDir,'connection.json'),'utf8'));
  if(config.schema!==1||config.build!==BUILD||config.port!==PORT||!/^[a-f0-9]{64}$/.test(config.token||''))throw Error('Invalid macOS helper connection config');
  const bridgePath=options.socketPath||bridgeSocketPath(req);
- await waitForBridge(req,bridgePath,config.token);
+ const initial=await waitForBridge(req,bridgePath,config.token);
+ const generation=initial.generation;
 
- let cachedState={phase:'idle',lines:[]};
+ let cachedState=initial.state;
  const engine={
   state:()=>cachedState,
   dispatch:async(op,args)=>{
-   const response=await bridgeRequest(req,bridgePath,config.token,{type:'dispatch',id:crypto.randomBytes(16).toString('hex'),op,args},60000);
+   // The HTTP layer retains the original promise for retry/deduplication. Do not
+   // time out an engine mutation while Premiere is still carrying it out.
+   const response=await bridgeRequest(req,bridgePath,config.token,{type:'dispatch',generation,id:crypto.randomBytes(16).toString('hex'),op,args},0);
    if(response.state)cachedState=response.state;
    if(!response.ok){const error=Error(response.error||'CEP engine command failed');error.state=response.state;throw error;}
    return response.state;
   }
  };
  const serverFactory=req(path.join(root,'server.js'));
- let bindRetries=0;
- const server=serverFactory(req('http'),config.token,crypto.randomBytes(16).toString('hex'),engine,error=>{
+ const http=req('http'),macHttp=Object.create(http);
+ macHttp.createServer=handler=>http.createServer((request,response)=>{
+  if(request.method==='GET'&&request.url==='/mac-health'&&request.headers.host==='127.0.0.1:'+PORT&&request.headers.authorization==='Bearer '+config.token){
+   response.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store','Connection':'close'});
+   return response.end(JSON.stringify({ok:true,build:BUILD,generation,pid:processModule.pid}));
+  }
+  return handler(request,response);
+ });
+ let bindRetries=0,stopped=false,retryTimer=null;
+ const server=serverFactory(macHttp,config.token,crypto.randomBytes(16).toString('hex'),engine,error=>{
   log('HELPER_SERVER_ERROR '+String(error));
   if(error&&error.code==='EADDRINUSE'&&bindRetries<60){
    bindRetries++;
-   return setTimeout(()=>server.listen(PORT,'127.0.0.1'),500);
+   // A reconnect click can race the already healthy process. Exit when that
+   // process serves our engine generation; never replace an unrelated listener.
+   const probe=http.get({hostname:'127.0.0.1',port:PORT,path:'/mac-health',headers:{Host:'127.0.0.1:'+PORT,Authorization:'Bearer '+config.token}},response=>{
+    let raw='';response.on('data',chunk=>{raw+=chunk;if(raw.length>1048576)probe.destroy();});
+    response.on('end',()=>{
+     try{const state=JSON.parse(raw);if(response.statusCode===200&&state.ok&&state.generation===generation){log('HELPER_ALREADY_RUNNING pid='+state.pid);return stop();}}catch(ignore){}
+     retry();
+    });
+   });
+   const retry=()=>{if(!stopped&&!retryTimer)retryTimer=setTimeout(()=>{retryTimer=null;if(!stopped)server.listen(PORT,'127.0.0.1');},500);};
+   probe.setTimeout(1000,()=>probe.destroy(Error('Listener probe timed out')));
+   probe.on('error',retry);
+   return;
   }
   processModule.exitCode=1;
   setTimeout(()=>processModule.exit(1),25);
@@ -77,16 +100,26 @@ async function start(options={}){
  log('HELPER_PROCESS_STARTED pid='+String(processModule.pid));
  server.on('listening',()=>log('HELPER_PORT_LISTENING 127.0.0.1:'+String(PORT)));
 
- let failures=0;
+ let failures=0,checking=false;
  const health=setInterval(async()=>{
-  try{await bridgeRequest(req,bridgePath,config.token,{type:'ping'},1000);failures=0;}
+  if(checking||stopped)return;checking=true;
+  try{
+   const response=await bridgeRequest(req,bridgePath,config.token,{type:'ping'},1000);
+   if(!response.ok||response.generation!==generation){log('HELPER_ENGINE_SESSION_CHANGED');return stop();}
+   cachedState=response.state;failures=0;
+  }
   catch(error){
    failures++;
-   if(failures>=5){log('HELPER_ENGINE_BRIDGE_LOST '+String(error));clearInterval(health);server.close(()=>processModule.exit(0));}
+   if(failures>=2){log('HELPER_ENGINE_BRIDGE_LOST '+String(error));stop();}
   }
+  finally{checking=false;}
  },2000);
  if(typeof health.unref==='function')health.unref();
- const stop=()=>{clearInterval(health);server.close(()=>processModule.exit(0));};
+ const stop=()=>{
+  if(stopped)return;stopped=true;clearInterval(health);clearTimeout(retryTimer);
+  const force=setTimeout(()=>processModule.exit(0),1000);if(force.unref)force.unref();
+  server.close(()=>{clearTimeout(force);processModule.exit(0);});
+ };
  processModule.once('SIGTERM',stop);processModule.once('SIGINT',stop);
  return server;
 }

@@ -51,6 +51,7 @@ jobs:
           node diagnostics/test-macos-helper-process.js
           node diagnostics/test-connect.js
           node diagnostics/test-panel.js
+          bash -n mac-builder/build.sh mac-builder/bundle-node.sh mac-builder/package/scripts/preinstall mac-builder/package/scripts/postinstall helper/launch-mac-helper
 
       - name: Build macOS installer
         shell: bash
@@ -61,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s mac-builder/output/RYZE_Caption_Tool_Mac.pkg
-          ./mac-builder/verify-mac-build.sh mac-builder/output/RYZE_Caption_Tool_Mac.pkg
+          RYZE_RUNTIME_TEST=1 ./mac-builder/verify-mac-build.sh mac-builder/output/RYZE_Caption_Tool_Mac.pkg
 
       - name: Upload macOS installer
         uses: actions/upload-artifact@v4

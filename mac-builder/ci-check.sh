@@ -50,6 +50,7 @@ need_file "$MAC_DIR/payload/UXP/manifest.json" "payload UXP manifest"
 need_file "$MAC_DIR/payload/UXP/index.js" "payload UXP entry point"
 need_file "$MAC_DIR/payload/helper/helper-info.json" "helper-info.json"
 need_file "$MAC_DIR/package/Distribution.xml" "Distribution.xml"
+need_file "$MAC_DIR/bundle-node.sh" "Node bundler"
 need_file "$MAC_DIR/package/scripts/preinstall" "preinstall script"
 need_file "$MAC_DIR/package/scripts/postinstall" "postinstall script"
 

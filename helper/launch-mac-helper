@@ -3,8 +3,9 @@ set -euo pipefail
 
 ROOT="/Library/Application Support/RYZE/CaptionToolV1/helper"
 DATA_DIR="$HOME/Library/Application Support/RYZE/CaptionToolV1"
-RUNTIME="$DATA_DIR/runtime-mac.json"
-NODE_PATH="$(/usr/bin/sed -nE 's/.*"nodePath"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$RUNTIME" | /usr/bin/head -n 1)"
+NODE_ARCH=x64
+if [[ "$(/usr/sbin/sysctl -in hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then NODE_ARCH=arm64; fi
+NODE_PATH="/Library/Application Support/RYZE/CaptionToolV1/runtime/$NODE_ARCH/bin/node"
 
 [[ -n "$NODE_PATH" && "$NODE_PATH" == /* && -x "$NODE_PATH" ]] || exit 1
 exec "$NODE_PATH" "$ROOT/helper/macos-launcher.js" "$ROOT" "$DATA_DIR"
