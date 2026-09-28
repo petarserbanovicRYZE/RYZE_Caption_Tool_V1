@@ -22,6 +22,7 @@ for test_name in \
   test-visibility \
   test-restore-diagnostics \
   test-connect \
+  test-macos-launcher \
   test-transport \
   test-integration \
   test-checkpoint \

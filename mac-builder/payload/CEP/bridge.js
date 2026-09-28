@@ -12,7 +12,6 @@
   const appSupport=env.APPDATA||(env.HOME?path.join(env.HOME,'Library','Application Support'):null);
   if(!appSupport)throw Error('User application support path unavailable');
   const dataDir=path.join(appSupport,'RYZE','CaptionToolV1');
-  const config=JSON.parse(fs.readFileSync(path.join(dataDir,'connection.json'),'utf8'));
   const checkpointPath=path.join(dataDir,'session.json');
   function atomic(value){const tmp=checkpointPath+'.tmp';const fd=fs.openSync(tmp,'w');try{fs.writeFileSync(fd,JSON.stringify(value),'utf8');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,checkpointPath);}
   function hostScript(script){return new Promise((resolve,reject)=>window.__adobe_cep__.evalScript(script,raw=>{try{const r=JSON.parse(raw);if(!r.ok)throw Error(r.error);resolve(r);}catch(e){reject(e);}}));} 
@@ -37,8 +36,14 @@
    append:(folder,name,text)=>{const fd=fs.openSync(path.join(folder,name),'a');try{fs.writeFileSync(fd,text,'utf8');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}},
    write:(folder,name,value)=>fs.writeFileSync(path.join(folder,name),JSON.stringify(value,null,2),'utf8')
   };
-  const engine=req(path.join(root,'engine.js'))(io);
-  window.ryzeV1server=req(path.join(root,'server.js'))(req('http'),config.token,io.id(),engine,e=>log('SERVER_ERROR '+String(e)));
-  log('BOOT; loopback port 48771');window.addEventListener('unload',()=>window.ryzeV1server.close());
+  if(req('process').platform==='darwin'){
+   window.ryzeV1server=req(path.join(root,'helper','macos-launcher.js'))({require:req,root,dataDir,io,log});
+  }else{
+   const config=JSON.parse(fs.readFileSync(path.join(dataDir,'connection.json'),'utf8'));
+   const engine=req(path.join(root,'engine.js'))(io);
+   window.ryzeV1server=req(path.join(root,'server.js'))(req('http'),config.token,io.id(),engine,e=>log('SERVER_ERROR '+String(e)));
+   log('BOOT; loopback port 48771');
+  }
+  window.addEventListener('unload',()=>window.ryzeV1server.close());
  }catch(e){log('BOOT_ERROR '+String(e));}
 })();

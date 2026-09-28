@@ -12,6 +12,11 @@
     "localFileSystem": "request",
     "network": {
       "domains": "all"
+    },
+    "launchProcess": {
+      "extensions": [
+        ".app"
+      ]
     }
   },
   "entrypoints": [

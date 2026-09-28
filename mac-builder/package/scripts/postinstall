@@ -94,6 +94,7 @@ run_as_user() {
 [[ -d "$HELPER_SOURCE" ]] || fail "helper payload is missing"
 [[ -f "$HELPER_SOURCE/CSXS/manifest.xml" ]] || fail "CEP manifest is missing"
 [[ -f "$HELPER_SOURCE/bridge.js" ]] || fail "CEP helper entry point is missing"
+[[ -f "$HELPER_SOURCE/helper/macos-launcher.js" ]] || fail "macOS helper launcher is missing"
 [[ -f "$CCX_SOURCE" ]] || fail "UXP CCX payload is missing"
 [[ -x "$UPIA" ]] || fail "Adobe UPIA was not found. Install or update Creative Cloud Desktop, then retry"
 /usr/bin/grep -Fq "ExtensionBundleId=\"$CEP_ID\"" "$HELPER_SOURCE/CSXS/manifest.xml" || fail "CEP bundle ID mismatch"
@@ -134,6 +135,7 @@ CEP_INSTALLED=1
 /usr/bin/find "$CEP_TARGET" -type d -exec /bin/chmod 0755 {} +
 /usr/bin/find "$CEP_TARGET" -type f -exec /bin/chmod 0644 {} +
 log "CEP helper installed at $CEP_TARGET. Startup remains registered by its existing ApplicationActivate manifest event."
+log "Helper launcher path: $CEP_TARGET/helper/macos-launcher.js"
 
 INSTALL_TMP="$(/usr/bin/mktemp -d "$DATA_DIR/.installer.XXXXXX")"
 /bin/mkdir -p "$INSTALL_TMP/unpacked"

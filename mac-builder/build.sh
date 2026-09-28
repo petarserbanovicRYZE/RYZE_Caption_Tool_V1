@@ -8,6 +8,7 @@ MAC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$MAC_DIR/.." && pwd)"
 SOURCE_UXP="$PROJECT_ROOT/uxp"
 SOURCE_CEP="$PROJECT_ROOT/cep"
+SOURCE_MAC_LAUNCHER="$PROJECT_ROOT/helper/macos-launcher.js"
 PAYLOAD_UXP="$MAC_DIR/payload/UXP"
 PAYLOAD_CEP="$MAC_DIR/payload/CEP"
 PAYLOAD_HELPER="$MAC_DIR/payload/helper"
@@ -82,6 +83,7 @@ need_file "$SOURCE_UXP/installer-config.json" "UXP pairing placeholder"
 need_file "$SOURCE_CEP/CSXS/manifest.xml" "CEP manifest"
 need_file "$SOURCE_CEP/bridge.js" "CEP helper entry point"
 need_file "$SOURCE_CEP/server.js" "CEP loopback service"
+need_file "$SOURCE_MAC_LAUNCHER" "macOS helper launcher"
 need_file "$SOURCE_CEP/assets/mogrts/RYZE_Box_V3.mogrt" "V3 MOGRT"
 need_file "$SOURCE_CEP/assets/mogrts/RYZE_Box_V5.mogrt" "V5 MOGRT"
 need_file "$SOURCE_CEP/assets/mogrts/RYZE_Stroke_V1.mogrt" "Stroke MOGRT"
@@ -105,6 +107,9 @@ grep -Fq '127.0.0.1:48771' "$SOURCE_UXP/index.js" || fail "UXP loopback endpoint
 grep -Fq "server.listen(48771,'127.0.0.1')" "$SOURCE_CEP/server.js" || fail "CEP loopback listener changed"
 grep -Fq "env.APPDATA" "$SOURCE_CEP/bridge.js" || fail "Windows config discovery was removed"
 grep -Fq "'Library','Application Support'" "$SOURCE_CEP/bridge.js" || fail "macOS config discovery is missing"
+grep -Fq "helper','macos-launcher.js" "$SOURCE_CEP/bridge.js" || fail "CEP does not load the macOS helper launcher"
+grep -Fq 'HELPER_PORT_LISTENING' "$SOURCE_MAC_LAUNCHER" || fail "macOS helper listening diagnostic is missing"
+grep -Fq '".app"' "$SOURCE_UXP/manifest.json" || fail "UXP macOS launch permission is missing"
 
 HELPER_UXP_ID="$(json_string uxpId "$PAYLOAD_HELPER/helper-info.json")"
 HELPER_CEP_ID="$(json_string cepBundleId "$PAYLOAD_HELPER/helper-info.json")"
@@ -129,16 +134,16 @@ sync_tree() {
 verify_cep_source_equality() {
   local candidate="$1" rel mismatch=0
   while IFS= read -r rel; do
-    if [[ ! -f "$candidate/$rel" ]] || ! cmp -s "$SOURCE_CEP/$rel" "$candidate/$rel"; then
+    if [[ ! -f "$candidate/$rel" ]] || ! cmp -s "$MAC_CEP_SOURCE/$rel" "$candidate/$rel"; then
       printf 'CEP payload differs from source: %s\n' "$rel" >&2
       mismatch=1
     fi
-  done < <(cd "$SOURCE_CEP" && find . -type f -print | sed 's#^\./##' | LC_ALL=C sort)
+  done < <(cd "$MAC_CEP_SOURCE" && find . -type f -print | sed 's#^\./##' | LC_ALL=C sort)
   [[ $mismatch -eq 0 ]] || fail "CEP payload source verification failed"
 
   while IFS= read -r rel; do
     rel="${rel#./}"
-    if [[ ! -f "$SOURCE_CEP/$rel" && "$rel" != mimetype && "$rel" != META-INF/* ]]; then
+    if [[ ! -f "$MAC_CEP_SOURCE/$rel" && "$rel" != mimetype && "$rel" != META-INF/* ]]; then
       fail "Unexpected file in signed CEP payload: $rel"
     fi
   done < <(cd "$candidate" && find . -type f -print | LC_ALL=C sort)
@@ -149,6 +154,11 @@ cleanup() {
   rm -rf -- "$WORK_DIR"
 }
 trap cleanup EXIT INT TERM
+
+MAC_CEP_SOURCE="$WORK_DIR/cep-source"
+mkdir -p "$MAC_CEP_SOURCE/helper"
+cp -R "$SOURCE_CEP/." "$MAC_CEP_SOURCE/"
+cp "$SOURCE_MAC_LAUNCHER" "$MAC_CEP_SOURCE/helper/macos-launcher.js"
 
 sync_tree "$SOURCE_UXP" "$PAYLOAD_UXP"
 
@@ -172,7 +182,7 @@ if [[ $CEP_CONFIG_COUNT -eq 3 ]]; then
   need_file "$CEP_SIGN_TOOL" "CEP ZXPSignCmd"
   need_file "$CEP_CERTIFICATE" "CEP signing certificate"
   SIGNED_ZXP="$WORK_DIR/RYZE_Caption_Tool_Helper.zxp"
-  "$CEP_SIGN_TOOL" -sign "$SOURCE_CEP" "$SIGNED_ZXP" "$CEP_CERTIFICATE" "$CEP_CERT_PASSWORD" -tsa "${CEP_TIMESTAMP_URL:-http://timestamp.digicert.com/}"
+  "$CEP_SIGN_TOOL" -sign "$MAC_CEP_SOURCE" "$SIGNED_ZXP" "$CEP_CERTIFICATE" "$CEP_CERT_PASSWORD" -tsa "${CEP_TIMESTAMP_URL:-http://timestamp.digicert.com/}"
   "$CEP_SIGN_TOOL" -verify "$SIGNED_ZXP"
   rm -rf -- "$PAYLOAD_CEP"
   mkdir -p "$PAYLOAD_CEP"
@@ -189,7 +199,7 @@ elif [[ -n "${CEP_SIGNED_SOURCE:-}" ]]; then
   sync_tree "$CEP_SIGNED_SOURCE" "$PAYLOAD_CEP"
   CEP_MODE="pre-signed extracted CEP"
 else
-  sync_tree "$SOURCE_CEP" "$PAYLOAD_CEP"
+  sync_tree "$MAC_CEP_SOURCE" "$PAYLOAD_CEP"
 fi
 
 verify_cep_source_equality "$PAYLOAD_CEP"

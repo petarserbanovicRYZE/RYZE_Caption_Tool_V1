@@ -1,6 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id),run=$('run'),undo=$('undo'),save=$('save'),connect=$('connect'),status=$('status');
-const storage=require('uxp').storage.localFileSystem;
+const uxp=require('uxp'),storage=uxp.storage.localFileSystem;
 let token=null,report='',busy=false,complete=false,blocked=true,epoch=null,serial=0,template='V3',reportBusy=false;
 const client=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2);
 function emit(s,state){report=s;if(busy&&state&&['ready','converting'].includes(state.phase)&&state.total){status.textContent='Creating captions '+state.next+' of '+state.total+'…';$('bar').style.width=Math.round(state.next/state.total*100)+'%';}}
@@ -18,17 +18,28 @@ const api={command:async(op,args)=>{if(!epoch)epoch=(await probe()).epoch;const 
 const workflow=require('./workflow.js')(api,require('./visibility.js')(require('premierepro')),emit);
 async function probe(){const r=await request('/status',null,2000);if(r.build!=='1.0.7')throw Error('Helper version mismatch. Close Premiere and run the 1.0.7 Setup.');return r;}
 async function attach(){epoch=(await probe()).epoch;const state=await workflow.attach();complete=state.converted;blocked=false;status.textContent=complete?'Ready. Your last conversion is available for Undo.':'Ready. Choose a style and convert.';}
-async function connectAutomatically(){
+function diagnostic(line){emit(report+'\n'+line);}
+async function launchMacHelper(){
+ const applicationPath=uxp.host&&uxp.host.applicationPath?String(uxp.host.applicationPath):'';
+ if(!/\.app\/?$/i.test(applicationPath))return;
+ diagnostic('HELPER_LAUNCHER_PATH = ~/Library/Application Support/Adobe/CEP/extensions/com.ryze.captiontool.v1.bridge/helper/macos-launcher.js');
+ diagnostic('HELPER_LAUNCH_ATTEMPTED = ApplicationActivate');
+ status.textContent='Starting RYZE helper…';
+ const result=await uxp.shell.openPath(applicationPath,'Reactivate Premiere so the RYZE helper can start.');
+ if(result)throw Error(result);
+ diagnostic('HELPER_PROCESS_START_REQUESTED = Premiere reactivated');
+}
+async function connectAutomatically(launchHelper){
  if(busy)return;busy=true;blocked=true;buttons();status.textContent='Connecting…';
  try{
   const folder=await storage.getPluginFolder();
   const config=JSON.parse(await (await folder.getEntry('installer-config.json')).read());
   if(config.schema!==1||config.build!=='1.0.7'||config.port!==48771||!/^[a-f0-9]{64}$/.test(config.token||''))throw Error('Setup pairing is missing. Close Premiere and reinstall RYZE.');
   token=config.token;
-  await require('./connect.js')(probe,()=>attach(),ms=>new Promise(r=>setTimeout(r,ms)),()=>{status.textContent='Connecting…';});
+  await require('./connect.js')(probe,()=>attach(),ms=>new Promise(r=>setTimeout(r,ms)),()=>{status.textContent='Connecting…';},launchHelper?launchMacHelper:null);
  }catch(e){blocked=true;status.textContent='Could not connect. Retry, or use Report bug for help.';emit(report+'\nCONNECT_STOP = '+String(e));}finally{busy=false;buttons();}
 }
-connect.addEventListener('click',connectAutomatically);
+connect.addEventListener('click',()=>connectAutomatically(true));
 run.addEventListener('click',async()=>{if(busy||blocked)return;busy=true;buttons();$('bar').style.width='0%';$('reportStatus').textContent='';status.textContent='Reading captions. Keep this sequence open.';
  try{const result=await workflow.run(template,true);complete=result.converted;$('bar').style.width='100%';status.textContent='Done — '+template+' captions are ready. Originals are preserved.';}
  catch(e){blocked=true;emit(report+'\nPANEL_STOP = '+String(e));status.textContent='Conversion stopped. Use Report bug before trying again.';}finally{busy=false;buttons();}});
@@ -45,4 +56,4 @@ save.addEventListener('click',async()=>{
   }
  }catch(e){$('reportStatus').textContent='Could not save the report. Try again.';}finally{reportBusy=false;buttons();}
 });
-connectAutomatically();
+connectAutomatically(false);

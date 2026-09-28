@@ -27,6 +27,7 @@ jobs:
           test -f mac-builder/ci-check.sh
           test -f mac-builder/package/scripts/preinstall
           test -f mac-builder/package/scripts/postinstall
+          test -f helper/macos-launcher.js
 
       - name: Make macOS scripts executable
         shell: bash
@@ -39,7 +40,11 @@ jobs:
 
       - name: Check macOS build inputs
         shell: bash
-        run: ./mac-builder/ci-check.sh
+        run: |
+          ./mac-builder/ci-check.sh
+          node diagnostics/test-macos-launcher.js
+          node diagnostics/test-connect.js
+          node diagnostics/test-panel.js
 
       - name: Build macOS installer
         shell: bash

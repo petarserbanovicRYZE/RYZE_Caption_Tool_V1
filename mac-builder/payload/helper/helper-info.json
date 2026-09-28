@@ -7,5 +7,6 @@
   "version": "1.0.7",
   "port": 48771,
   "startup": "com.adobe.csxs.events.ApplicationActivate",
+  "launcher": "helper/macos-launcher.js",
   "nativeBinary": false
 }

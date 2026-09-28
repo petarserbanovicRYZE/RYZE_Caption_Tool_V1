@@ -4,6 +4,10 @@ const assert=require('assert'),connect=require('../uxp/connect');
  let tries=0,attached=0,pauses=0;
  await connect(async()=>{if(++tries<4)throw Error('Failed to fetch');},async()=>attached++,async()=>pauses++,()=>{});
  assert.equal(tries,4);assert.equal(attached,1);assert.equal(pauses,3);
+ let launches=0;
+ tries=0;attached=0;pauses=0;
+ await connect(async()=>{if(++tries<3)throw Error('Connection refused');},async()=>attached++,async()=>pauses++,()=>{},async()=>launches++);
+ assert.equal(tries,3);assert.equal(attached,1);assert.equal(pauses,2);assert.equal(launches,1,'Reconnect must attempt one helper launch before retrying');
  for(const error of ['Unauthorized','Helper version mismatch','Permission denied. Manifest entry not found']){
   tries=0;attached=0;
   await assert.rejects(()=>connect(async()=>{tries++;throw Error(error);},async()=>attached++,async()=>{},()=>{}));

@@ -5,6 +5,7 @@ MAC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$MAC_DIR/.." && pwd)"
 SOURCE_UXP="$PROJECT_ROOT/uxp"
 SOURCE_CEP="$PROJECT_ROOT/cep"
+SOURCE_MAC_LAUNCHER="$PROJECT_ROOT/helper/macos-launcher.js"
 PAYLOAD_UXP="$MAC_DIR/payload/UXP"
 PAYLOAD_CEP="$MAC_DIR/payload/CEP"
 HELPER_INFO="$MAC_DIR/payload/helper/helper-info.json"
@@ -53,6 +54,7 @@ for required in \
   "$SOURCE_CEP/CSXS/manifest.xml" \
   "$SOURCE_CEP/bridge.js" \
   "$SOURCE_CEP/server.js" \
+  "$SOURCE_MAC_LAUNCHER" \
   "$HELPER_INFO"; do
   need_file "$required"
 done
@@ -87,6 +89,11 @@ grep -Fq "env.APPDATA" "$SOURCE_CEP/bridge.js" || fail "Windows application-data
 grep -Fq "'Library','Application Support'" "$SOURCE_CEP/bridge.js" || fail "macOS application-data path support is missing"
 grep -Fq '127.0.0.1:48771' "$SOURCE_UXP/index.js" || fail "UXP helper endpoint changed"
 grep -Fq "server.listen(48771,'127.0.0.1')" "$SOURCE_CEP/server.js" || fail "CEP helper endpoint changed"
+grep -Fq "helper','macos-launcher.js" "$SOURCE_CEP/bridge.js" || fail "CEP macOS launcher import missing"
+grep -Fq 'HELPER_LAUNCH_ATTEMPTED' "$SOURCE_MAC_LAUNCHER" || fail "launcher attempt diagnostic missing"
+grep -Fq 'HELPER_PROCESS_STARTED' "$SOURCE_MAC_LAUNCHER" || fail "launcher process diagnostic missing"
+grep -Fq 'HELPER_PORT_LISTENING' "$SOURCE_MAC_LAUNCHER" || fail "launcher listening diagnostic missing"
+grep -Fq '".app"' "$SOURCE_UXP/manifest.json" || fail "UXP macOS launch permission missing"
 grep -Fq 'com.ryze.captiontool.v1.macos.pkg' "$MAC_DIR/package/Distribution.xml" || fail "package identifier changed"
 
 for mogrt in RYZE_Box_V3.mogrt RYZE_Box_V5.mogrt RYZE_Stroke_V1.mogrt; do
@@ -115,9 +122,13 @@ if [[ -d "$PAYLOAD_UXP" && -d "$PAYLOAD_CEP" ]]; then
       mismatch=1
     fi
   done < <(cd "$SOURCE_CEP" && find . -type f -print | sed 's#^\./##' | LC_ALL=C sort)
+  if [[ ! -f "$PAYLOAD_CEP/helper/macos-launcher.js" ]] || ! cmp -s "$SOURCE_MAC_LAUNCHER" "$PAYLOAD_CEP/helper/macos-launcher.js"; then
+    printf 'CEP payload mismatch: helper/macos-launcher.js\n' >&2
+    mismatch=1
+  fi
   while IFS= read -r rel; do
     rel="${rel#./}"
-    if [[ ! -f "$SOURCE_CEP/$rel" && "$rel" != mimetype && "$rel" != META-INF/* ]]; then
+    if [[ ! -f "$SOURCE_CEP/$rel" && "$rel" != helper/macos-launcher.js && "$rel" != mimetype && "$rel" != META-INF/* ]]; then
       printf 'Unexpected CEP payload file: %s\n' "$rel" >&2
       mismatch=1
     fi
@@ -149,17 +160,20 @@ trap cleanup EXIT INT TERM
 
 pkgutil --expand-full "$PACKAGE_PATH" "$EXPAND_DIR/expanded"
 EXPANDED_CEP_MANIFEST="$(find "$EXPAND_DIR/expanded" -type f -path '*/Payload/Library/Application Support/RYZE/CaptionToolV1/helper/CSXS/manifest.xml' -print | head -n 1)"
+EXPANDED_MAC_LAUNCHER="$(find "$EXPAND_DIR/expanded" -type f -path '*/Payload/Library/Application Support/RYZE/CaptionToolV1/helper/helper/macos-launcher.js' -print | head -n 1)"
 EXPANDED_UXP_PACKAGE="$(find "$EXPAND_DIR/expanded" -type f -path '*/Payload/Library/Application Support/RYZE/CaptionToolV1/packages/RYZE_Caption_Tool.ccx' -print | head -n 1)"
 EXPANDED_POSTINSTALL="$(find "$EXPAND_DIR/expanded" -type f -path '*/Scripts/postinstall' -print | head -n 1)"
 EXPANDED_PACKAGE_INFO="$(find "$EXPAND_DIR/expanded" -type f -name PackageInfo -print | head -n 1)"
 
 need_file "$EXPANDED_CEP_MANIFEST"
+need_file "$EXPANDED_MAC_LAUNCHER"
 need_file "$EXPANDED_UXP_PACKAGE"
 need_file "$EXPANDED_POSTINSTALL"
 need_file "$EXPANDED_PACKAGE_INFO"
 grep -Fq "identifier=\"com.ryze.captiontool.v1.macos.pkg\"" "$EXPANDED_PACKAGE_INFO" || fail "component package ID mismatch"
 grep -Fq "version=\"$UXP_VERSION\"" "$EXPANDED_PACKAGE_INFO" || fail "component package version mismatch"
 [[ "$(xml_attribute ExtensionBundleId "$EXPANDED_CEP_MANIFEST")" == "$CEP_ID" ]] || fail "packaged CEP ID mismatch"
+cmp -s "$SOURCE_MAC_LAUNCHER" "$EXPANDED_MAC_LAUNCHER" || fail "packaged macOS helper launcher differs from source"
 
 mkdir -p "$EXPAND_DIR/uxp"
 unzip -q "$EXPANDED_UXP_PACKAGE" -d "$EXPAND_DIR/uxp"
