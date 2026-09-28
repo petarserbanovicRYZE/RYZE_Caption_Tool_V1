@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Validate macOS runner and build files
         shell: bash
@@ -65,7 +65,7 @@ jobs:
           RYZE_RUNTIME_TEST=1 ./mac-builder/verify-mac-build.sh mac-builder/output/RYZE_Caption_Tool_Mac.pkg
 
       - name: Upload macOS installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: RYZE_Caption_Tool_Mac
           path: mac-builder/output/RYZE_Caption_Tool_Mac.pkg

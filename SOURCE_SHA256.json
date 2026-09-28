@@ -1,6 +1,6 @@
 {
   ".gitattributes": "ddd562d5507b38dc04f9072204cdc40b5dd7846d367bcbbd16da1ff5755ae04d",
-  ".github/workflows/mac-build.yml": "5ee6347eaa8770cd86979bb24ed4f261f92b53bca18f408be1f60cea61b7ba65",
+  ".github/workflows/mac-build.yml": "8d04b212269b15be48811b109d502f9a00b721b308c069b64087f0f6331d4be7",
   "BUILD.cmd": "2101cd9b88b31b98f8b44b7a3e48e7329153162b0ed4d990622605b01bd12c1c",
   "builder/Build.ps1": "7ffa4ef65ecd6116c58f050b66c8fa3db207d505ca0857bfa39e2d167345b1c0",
   "builder/validate.js": "58114f0e1be9d15c7210afc538aba53df166fcde0fb0d45ac4479eb14d63961c",
