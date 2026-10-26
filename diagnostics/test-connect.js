@@ -22,7 +22,8 @@ const assert=require('assert'),connect=require('../uxp/connect');
  // Execute the real panel startup with mocked UXP file and HTTP APIs, no manual pairing.
  const vm=require('vm'),fs=require('fs'),elements={};let pluginReads=0,fetches=0;
  const credential='a'.repeat(64);
- const context={document:{getElementById:id=>elements[id]||(elements[id]={style:{},addEventListener(){}})},setTimeout,clearTimeout,fetch:async(url,options)=>{fetches++;assert(url.endsWith('/status'));assert.equal(options.headers.Authorization,'Bearer '+credential);return {status:200,json:async()=>({ok:true,build:'1.0.7',epoch:'epoch'})};},require:name=>{
+ const context={document:{getElementById:id=>elements[id]||(elements[id]={style:{},addEventListener(){}})},setTimeout,clearTimeout,fetch:async(url,options)=>{fetches++;assert(url.endsWith('/status'));assert.equal(options.headers.Authorization,'Bearer '+credential);return {status:200,json:async()=>({ok:true,build:'1.0.7',revision:require('../uxp/build-info.json').revision,epoch:'epoch'})};},require:name=>{
+  if(name==='./build-info.json')return require('../uxp/build-info.json');
   if(name==='uxp')return {storage:{localFileSystem:{getPluginFolder:async()=>({getEntry:async filename=>{assert.equal(filename,'installer-config.json');pluginReads++;return {read:async()=>JSON.stringify({schema:1,build:'1.0.7',port:48771,token:credential})};}})}}};
   if(name==='premierepro')return {};
   if(name==='./connect.js')return connect;

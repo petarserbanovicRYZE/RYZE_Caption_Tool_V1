@@ -51,7 +51,10 @@ for required in \
   "$MAC_DIR/package/Distribution.xml" \
   "$MAC_DIR/package/scripts/preinstall" \
   "$MAC_DIR/package/scripts/postinstall" \
+  "$MAC_DIR/package/scripts/installer-support.js" \
   "$SOURCE_UXP/manifest.json" \
+  "$SOURCE_UXP/build-info.json" \
+  "$SOURCE_CEP/build-info.json" \
   "$SOURCE_UXP/installer-config.json" \
   "$SOURCE_CEP/CSXS/manifest.xml" \
   "$SOURCE_CEP/bridge.js" \
@@ -166,7 +169,9 @@ EXPAND_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ryze-pkg-verify.XXXXXX")"
 cleanup() {
   rm -rf -- "$EXPAND_DIR"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 pkgutil --expand-full "$PACKAGE_PATH" "$EXPAND_DIR/expanded"
 EXPANDED_CEP_MANIFEST="$(find "$EXPAND_DIR/expanded" -type f -path '*/Payload/Library/Application Support/RYZE/CaptionToolV1/helper/CSXS/manifest.xml' -print | head -n 1)"
@@ -175,6 +180,7 @@ EXPANDED_MAC_PROCESS="$(find "$EXPAND_DIR/expanded" -type f -path '*/Payload/Lib
 EXPANDED_MAC_COMMAND="$(find "$EXPAND_DIR/expanded" -type f -path '*/Payload/Library/Application Support/RYZE/CaptionToolV1/bin/ryze-caption-helper' -print | head -n 1)"
 EXPANDED_UXP_PACKAGE="$(find "$EXPAND_DIR/expanded" -type f -path '*/Payload/Library/Application Support/RYZE/CaptionToolV1/packages/RYZE_Caption_Tool.ccx' -print | head -n 1)"
 EXPANDED_POSTINSTALL="$(find "$EXPAND_DIR/expanded" -type f -path '*/Scripts/postinstall' -print | head -n 1)"
+EXPANDED_SUPPORT="$(find "$EXPAND_DIR/expanded" -type f -path '*/Scripts/installer-support.js' -print | head -n 1)"
 EXPANDED_PACKAGE_INFO="$(find "$EXPAND_DIR/expanded" -type f -name PackageInfo -print | head -n 1)"
 
 need_file "$EXPANDED_CEP_MANIFEST"
@@ -183,6 +189,10 @@ need_file "$EXPANDED_MAC_PROCESS"
 need_file "$EXPANDED_MAC_COMMAND"
 need_file "$EXPANDED_UXP_PACKAGE"
 need_file "$EXPANDED_POSTINSTALL"
+need_file "$EXPANDED_SUPPORT"
+cmp -s "$MAC_DIR/package/scripts/installer-support.js" "$EXPANDED_SUPPORT" || fail "packaged installer support differs from source"
+cmp -s "$MAC_DIR/package/scripts/postinstall" "$EXPANDED_POSTINSTALL" || fail "packaged postinstall differs from source"
+[[ -x "$EXPANDED_POSTINSTALL" ]] || fail "packaged postinstall is not executable"
 need_file "$EXPANDED_PACKAGE_INFO"
 grep -Fq "identifier=\"com.ryze.captiontool.v1.macos.pkg\"" "$EXPANDED_PACKAGE_INFO" || fail "component package ID mismatch"
 grep -Fq "version=\"$UXP_VERSION\"" "$EXPANDED_PACKAGE_INFO" || fail "component package version mismatch"
@@ -213,6 +223,15 @@ unzip -q "$EXPANDED_UXP_PACKAGE" -d "$EXPAND_DIR/uxp"
 need_file "$EXPAND_DIR/uxp/manifest.json"
 [[ "$(json_string id "$EXPAND_DIR/uxp/manifest.json")" == "$UXP_ID" ]] || fail "packaged UXP ID mismatch"
 [[ "$(json_string version "$EXPAND_DIR/uxp/manifest.json")" == "$UXP_VERSION" ]] || fail "packaged UXP version mismatch"
+cmp -s "$SOURCE_UXP/build-info.json" "$EXPAND_DIR/uxp/build-info.json" || fail "packaged UXP revision differs from source"
+cmp -s "$SOURCE_CEP/build-info.json" "$EXPANDED_BASE/helper/build-info.json" || fail "packaged helper revision differs from source"
+# Check every application file inside the package, not only the staging copies.
+while IFS= read -r rel; do
+  cmp -s "$SOURCE_UXP/$rel" "$EXPAND_DIR/uxp/$rel" || fail "packaged UXP differs: $rel"
+done < <(cd "$SOURCE_UXP" && find . -type f -print | LC_ALL=C sort)
+while IFS= read -r rel; do
+  cmp -s "$SOURCE_CEP/$rel" "$EXPANDED_BASE/helper/$rel" || fail "packaged CEP differs: $rel"
+done < <(cd "$SOURCE_CEP" && find . -type f -print | LC_ALL=C sort)
 
 pkgutil --check-signature "$PACKAGE_PATH" || true
 printf 'VERIFY PASS: package exists and contains the expected helper, UXP package, scripts, IDs, and version.\n'

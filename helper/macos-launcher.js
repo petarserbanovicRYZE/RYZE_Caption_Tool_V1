@@ -63,15 +63,21 @@ function startEngineBridge(options){
  const engine=req(path.join(root,'engine.js'))(io);
  const bridgePath=options.socketPath||socketPath(req);
  let child=null,closed=false,ownsSocket=false,busy=false,recovering=false,restarts=0,restartTimer=null;
+ const retryLaunch=()=>{
+  if(closed||restartTimer)return;
+  if(restarts>=3){log('HELPER_RESTART_LIMIT reached; use Reconnect helper');return;}
+  restarts++;restartTimer=setTimeout(()=>{restartTimer=null;launch();},1000*restarts);
+ };
  const launch=()=>{
   if(closed)return;
   try{
    child=spawnHelper(req,root,dataDir,log);
+   child.once('error',retryLaunch);
    child.once('exit',(code,signal)=>{
     log('HELPER_PROCESS_EXIT code='+code+' signal='+signal);
-    if(!closed&&(code!==0||signal)&&restarts<3){restarts++;restartTimer=setTimeout(launch,1000*restarts);}
+    if(code!==0||signal)retryLaunch();
    });
-  }catch(error){log('HELPER_PROCESS_ERROR '+String(error));}
+  }catch(error){log('HELPER_PROCESS_ERROR '+String(error));retryLaunch();}
  };
  if(!options.socketPath){
   const directory=path.dirname(bridgePath);

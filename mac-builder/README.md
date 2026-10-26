@@ -13,7 +13,7 @@ Build the final package on macOS with:
 - The standard macOS `zip`, `unzip`, `openssl`, `sed`, and shell tools.
 - Adobe Creative Cloud Desktop on the target Mac. Its Unified Plugin Installer Agent (UPIA) is required during installation.
 - Internet access on the build runner to download the official Node.js 22.23.3 distributions. SHA-256 checksums and upstream code signatures are verified. Intel and Apple Silicon runtimes and their license files are included in the package; teammates do not install Node separately.
-- Premiere Pro 26.5.1 for the V1 runtime that the extension currently gates and has been tested against.
+- Premiere Pro 25.6 or newer with CEP 12 and the required UXP caption APIs. There is no upper host-version cap; availability and behavior of Adobe APIs still need real-Premiere verification per release. See [compatibility policy](../COMPATIBILITY.md). Previously downloaded installers do not acquire this change until rebuilt.
 - Optional: a current macOS `ZXPSignCmd`, CEP `.p12`, and password for a production-loadable signed CEP payload.
 - Optional: Apple `Developer ID Installer` and `Developer ID Application` identities in the build Mac keychain.
 
@@ -50,7 +50,13 @@ The repository includes `.github/workflows/mac-build.yml`, which builds the real
 5. Open the completed workflow run and download the `RYZE_Caption_Tool_Mac` artifact.
 6. Extract the artifact to obtain `RYZE_Caption_Tool_Mac.pkg`.
 
-The workflow verifies that it is running on Darwin and that `pkgbuild` and `productbuild` are present. It runs `mac-builder/ci-check.sh`, builds the package, expands and verifies its contents through `verify-mac-build.sh`, and uploads only the resulting real macOS package. No Apple certificate is required for this unsigned internal-testing build.
+Download the artifact from the **new successful run**, not a previously downloaded
+`1.0.7` package. `BUILD_INFO.json` alongside it records the source commit, build
+revision, workflow run and installer SHA-256. The current source revision is
+`recovery-audit-20261022.1`; the installer receipt and bug report record it too.
+The panel refuses a mismatched helper revision rather than running mixed files.
+
+The workflow first runs Windows regression tests in isolated temporary folders; it does not install the Windows plugin. On Darwin it runs all JavaScript suites and `mac-builder/ci-check.sh`, builds the package with Apple tools, expands and verifies its contents through `verify-mac-build.sh`, and uploads the real package plus build provenance. No Apple certificate is required for this unsigned internal-testing build.
 
 The existing environment variables remain the signing placeholders for a future certificate-enabled GitHub workflow:
 
@@ -149,9 +155,18 @@ Opening Premiere loads the hidden CEP engine bridge through the existing manifes
 
 `server.js` remains a factory module and is not a command-line entry point. Running `node server.js` directly is therefore not a valid helper test. The Mac child entry is `helper/macos-helper-process.js`; `macos-launcher.js` starts it with the Node path recorded by the installer.
 
-UXP is installed through Adobe UPIA instead of guessing Adobe’s private `PluginsStorage` subdirectory structure. UPIA owns registration and final placement; the installer creates the documented base directory and verifies that UPIA lists RYZE Caption Tool `1.0.7` after install.
+UXP is installed through Adobe UPIA instead of guessing Adobe’s private `PluginsStorage` subdirectory structure. UPIA owns registration and final placement; the installer verifies an enabled exact RYZE Caption Tool `1.0.7` row under Premiere 25.6 or newer. Failure restores prior CEP/config files where possible and retains private backups. Adobe registration and the system payload are separate transactions; a failed install still requires reinstalling, not continuing with mixed files.
 
 The token remains a random per-user 64-character hexadecimal value. The UXP CCX is personalized in a temporary user-owned directory, passed to UPIA, and deleted. The signed CEP content is never personalized.
+
+## Interrupted-session recovery
+
+Do not delete `session.json` to make the panel connect. This revision automatically
+archives and abandons only the exact legacy **preparation-only** record, after
+checking the original active sequence is unchanged and the host has no active
+conversion. Open that original sequence before reconnecting. Other interrupted
+sessions stay blocked to protect the timeline and Undo history. A corrupted
+checkpoint keeps reports available but is not silently reset. See [audit details](MAC_AUDIT.md).
 
 ## Verification
 

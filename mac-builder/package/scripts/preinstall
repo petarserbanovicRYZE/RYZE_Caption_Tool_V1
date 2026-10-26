@@ -14,6 +14,23 @@ if [[ "${3:-/}" != / ]]; then
   log "Install RYZE on the running macOS system volume."
   exit 1
 fi
+# pkgbuild installs the system payload before postinstall runs. Reject redirected
+# destinations before the privileged installer writes any helper/runtime files.
+TARGET="/Library/Application Support/RYZE/CaptionToolV1"
+while [[ "$TARGET" != / ]]; do
+  if [[ -L "$TARGET" ]]; then
+    log "Refusing symlink install location: $TARGET"
+    exit 1
+  fi
+  TARGET="$(/usr/bin/dirname "$TARGET")"
+done
+if [[ -d '/Library/Application Support/RYZE/CaptionToolV1' ]]; then
+  LINK="$(/usr/bin/find '/Library/Application Support/RYZE/CaptionToolV1' -type l -print -quit)"
+  if [[ -n "$LINK" ]]; then
+    log "Refusing an existing helper installation containing symlinks: $LINK"
+    exit 1
+  fi
+fi
 UPIA="/Library/Application Support/Adobe/Adobe Desktop Common/RemoteComponents/UPI/UnifiedPluginInstallerAgent/UnifiedPluginInstallerAgent.app/Contents/macOS/UnifiedPluginInstallerAgent"
 if [[ ! -x "$UPIA" ]]; then
   log "Install or update Adobe Creative Cloud Desktop before installing RYZE."

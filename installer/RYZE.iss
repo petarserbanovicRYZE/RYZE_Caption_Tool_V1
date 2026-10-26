@@ -28,6 +28,7 @@ Source: "{#PayloadDir}\Install-Adobe.ps1"; DestDir: "{app}"
 Source: "{#PayloadDir}\README_TEAM.txt"; DestDir: "{app}"
 [Icons]
 Name: "{group}\RYZE Caption Tool instructions"; Filename: "{app}\README_TEAM.txt"
+Name: "{group}\Repair RYZE Caption Tool"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Install-Adobe.ps1"" -InteractiveRepair"; WorkingDir: "{app}"
 Name: "{group}\Uninstall RYZE Caption Tool"; Filename: "{uninstallexe}"
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);

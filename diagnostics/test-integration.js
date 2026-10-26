@@ -1,8 +1,9 @@
 'use strict';
 const assert=require('assert'),make=require('./test-host'),createEngine=require('../cep/engine'),createFlow=require('../uxp/workflow');
-async function test(mode,template='V3',grouped=true){
+async function test(mode,template='V3',grouped=true,version='26.5.1'){
  const hashes={V3:'22e6acb94b560e24ba4b025afac6b989dc151100cf6f01bf87898513738757bd',V5:'72418fd40cb4233cbd54a426a791732dca332af29094d6ace8d2e00d0b6f86b8',Stroke:'21ad2731dd319a952c5cfb166b2cedf9e0ed06003b6b311b029e1159a24e1813'};
  const h=make('good'),logs=[],order=[];let muted=false,failedOnce=false,counter=0;
+ h.ctx.app.version=version;
  const caption={index:0,id:'1',name:'Subtitle',muted:false,items:[{start:'0',end:'20'},{start:'20',end:'40'},{start:'40',end:'60'}]};
  const base={guid:'123',name:'Regular edit sequence',video:[],audio:[],caption:[caption]};
  const native={sequenceID:'123',sequenceName:base.name,tracks:[{index:0,frameTicks:'1',cues:caption.items.map((t,i)=>({startTicks:t.start,endTicks:t.end,startFrame:+t.start,endFrame:+t.end,text:'caption '+i}))}]};
@@ -20,4 +21,4 @@ async function test(mode,template='V3',grouped=true){
  }
  assert.strictEqual(h.api.state.phase,'finished');
 }
-(async()=>{for(const template of ['V3','V5','Stroke']){await test('good',template);await test('good',template,false);}await test('hideThrows');console.log('PASS V1 single-pass conversion, hide after verified success, Undo restores captions first, and hide-mutates-then-throws rollback (mock host).');})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{for(const version of ['25.6.0','26.3.0','26.5.1','27.0.0']){for(const template of ['V3','V5','Stroke']){await test('good',template,true,version);await test('good',template,false,version);}await test('hideThrows','V3',true,version);}console.log('PASS V1 conversion/Undo/rollback on mock 25.6, 26.3, 26.5.1 and future 27.0 hosts; this is not real Premiere certification.');})().catch(e=>{console.error(e);process.exitCode=1;});

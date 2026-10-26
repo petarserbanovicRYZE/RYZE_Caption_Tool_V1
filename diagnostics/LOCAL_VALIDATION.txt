@@ -1,7 +1,19 @@
-RYZE 1.0.7 local validation
-PASS builder source validation and all three original MOGRT hashes.
-PASS all 15 diagnostics/test-*.js suites on Linux (mock Premiere/UXP).
-PASS PowerShell parser on all four PS1 scripts. Syntax only; Windows signing and installer not executed.
-PASS conversion/Undo implementation comparison with 1.0.6: only build identifiers differ.
-UI scroll uses Adobe-documented overflow-y; real Premiere panel layout requires runtime verification.
-No malware scan or company approval claimed. Exact compiled Windows EXE not supplied.
+RYZE 1.0.7 local validation - 2026-10-22
+Revision: recovery-audit-20261022.1
+Host: Windows; real Adobe APIs mocked, not a Premiere integration run.
+PASS node builder/validate.js, including original MOGRT hashes and paired revisions.
+PASS node diagnostics/run-tests.js: 23 JavaScript suites.
+PASS new Undo-history regression fails before the fix and passes after it.
+PASS read-only Undo checks preserve archived checkpoint identity across retries/reload.
+PASS real archive differences remain blocked; no saved history is overwritten.
+PASS diagnostics/test-installer.ps1 and diagnostics/test-installer-repair.ps1.
+Windows repair tests run 11 isolated scenarios; no real Adobe installation occurs.
+PASS Bash syntax for build/check/verify/bundler/installer/reconnect/preflight scripts.
+PASS YAML 1.2 parsing and assertions for macOS runner, Windows gate and artifact paths.
+PASS mac-builder/ci-check.sh and verify-mac-build.sh --source-only.
+PASS Windows Build.ps1, Install-Adobe.ps1, RYZE.iss and core MOGRT algorithms match pre-audit hashes.
+SOURCE_SHA256.json hashes text with LF line endings; MOGRT binaries use raw bytes.
+No new Windows EXE or Mac PKG was compiled, signed, notarized, installed or uploaded.
+Darwin process/socket tests are gated to the real macOS GitHub runner.
+Real UPIA registration, CEP activation, all styles/Undo and OS permissions remain acceptance tests.
+No malware scan, company approval or claim that all possible bugs are eliminated.

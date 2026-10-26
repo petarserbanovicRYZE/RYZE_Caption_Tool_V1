@@ -2,14 +2,53 @@
 const {setText,textValue}=require('./text');const match=require('./match');
 const templates={V3:['RYZE_Box_V3.mogrt','22e6acb94b560e24ba4b025afac6b989dc151100cf6f01bf87898513738757bd'],V5:['RYZE_Box_V5.mogrt','72418fd40cb4233cbd54a426a791732dca332af29094d6ace8d2e00d0b6f86b8'],Stroke:['RYZE_Stroke_V1.mogrt','21ad2731dd319a952c5cfb166b2cedf9e0ed06003b6b311b029e1159a24e1813']};
 module.exports=function createEngine(io){
- let s=io.load?io.load():null; let restoredHost=false;let queued=[];
- const checkpoint=()=>{const t=Date.now();if(io.checkpoint)io.checkpoint(s);if(s&&s.profile)s.profile.checkpointMs+=Date.now()-t;};
+ let s=null,recoveryError=null;
+ try{
+  s=io.load?io.load():null;
+  if(s!==null&&s!==undefined&&(typeof s!=='object'||Array.isArray(s)||!['interrupted','preparing','ready','converting','failed','awaiting_visibility','hiding','converted','finished','abandoned'].includes(s.phase)||(s.lines!==undefined&&!Array.isArray(s.lines))))throw Error('Unrecognized saved session structure');
+ }catch(error){
+  recoveryError='Saved session could not be read. Keep session.json and the saved project copy; automatic edits are blocked. '+String(error);
+  // Keep HTTP diagnostics available, but never overwrite or clear the original.
+  s={phase:'recovery_required',lines:['SESSION_READ_STOP = '+recoveryError]};
+ }
+ let restoredHost=false;let queued=[];
+ // Completed records may already be archived for Undo. Timing bookkeeping must
+ // not change their identity after a refused preparation or a read-only check.
+ const checkpoint=()=>{const t=Date.now();if(io.checkpoint)io.checkpoint(s);if(s&&s.profile&&!['converted','finished','abandoned'].includes(s.phase))s.profile.checkpointMs+=Date.now()-t;};
  const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
  function log(text){const t=Date.now();s.lines.push(text);io.append(s.folder,'report.txt',text+'\n');if(s.profile)s.profile.logMs+=Date.now()-t;}
- function event(kind,value){const t=Date.now();io.append(s.folder,'journal.ndjson',JSON.stringify({time:new Date().toISOString(),kind,value})+'\n');if(s.profile)s.profile.logMs+=Date.now()-t;}
- function state(){return s?{batch:s.batch,phase:s.phase,folder:s.folder,lines:s.lines.slice(),base:s.base,next:s.next,total:s.plan?s.plan.length:0,hideAttempted:s.hideAttempted,owned:s.owned,output:s.output,outputs:s.outputs,fast:s.fast,conversionMs:s.conversionMs,cleanupMs:s.cleanupMs}: {phase:'idle',lines:[]};}
- async function host(method,...args){const started=Date.now();const r=await io.host(method,...args);const m=s.timing[method]||(s.timing[method]={calls:0,totalMs:0});m.calls++;m.totalMs+=Date.now()-started;if(s.profile){s.profile.bridgeMs+=Date.now()-started;for(const key of Object.keys(r.perf||{})){const target=s.profile.host[key]||(s.profile.host[key]={calls:0,ms:0});target.calls+=r.perf[key].calls;target.ms+=r.perf[key].ms;}}event(method,r);if(!r.ok)throw Error(method+': '+r.error);return r;}
- async function inspect(id){for(let i=0;i<12;i++){try{return(await host('inspectClip',id)).clip;}catch(e){if(!String(e).includes('not ready')||i===11)throw e;await io.pause(500);}}}
+ function event(kind,value,measure=true){const t=Date.now();io.append(s.folder,'journal.ndjson',JSON.stringify({time:new Date().toISOString(),kind,value})+'\n');if(measure&&s.profile)s.profile.logMs+=Date.now()-t;}
+ function preparationOnly(){return !!(s&&s.phase==='interrupted'&&equal(Object.keys(s).sort(),['base','batch','lines','phase'])&&/^[a-f0-9]{32}$/.test(s.batch)&&Array.isArray(s.lines)&&!s.lines.length&&s.base&&typeof s.base.guid==='string'&&['video','audio','caption'].every(k=>Array.isArray(s.base[k])));}
+ function state(){return s?{batch:s.batch,phase:s.phase,folder:s.folder,lines:(s.lines||[]).slice(),base:s.base,next:s.next,total:s.plan?s.plan.length:0,hideAttempted:s.hideAttempted,owned:s.owned,output:s.output,outputs:s.outputs,fast:s.fast,conversionMs:s.conversionMs,cleanupMs:s.cleanupMs,preparationRecoverable:preparationOnly()}: {phase:'idle',lines:[]};}
+ async function recoverPreparation(a){
+  // Only the exact legacy pre-prepare marker is eligible. Never clear conversion,
+  // visibility, Undo, malformed or unknown checkpoints. No timeline edits here.
+  if(!preparationOnly()||!equal(a.observed,s.base))throw Error('Preparation recovery requires the original unchanged sequence; save diagnostics before changing anything.');
+  if(typeof io.archive!=='function')throw Error('Preparation backup unavailable; saved session was not cleared.');
+  const live=await io.host('status');
+  if(!live||!live.ok||(live.state&&!['finished','prepared'].includes(live.state.phase)))throw Error('Host owns an unfinished batch; automatic recovery refused.');
+  io.archive(s); // Durable backup must succeed BEFORE clearing any state.
+  if(live.state&&live.state.phase==='prepared'){
+   const cancelled=await io.host('cancelPrepared');
+   if(!cancelled||!cancelled.ok)throw Error(cancelled&&cancelled.error||'Preparation could not be safely abandoned.');
+  }
+  s={...s,phase:'abandoned',lines:['PREPARATION_RECOVERED = original sequence unchanged; previous checkpoint retained in history. No timeline edits.']};
+  return state();
+ }
+ async function callHost(readOnly,method,...args){
+  const started=Date.now(),r=await io.host(method,...args);
+  // A completed record may already be archived after a refused preparation.
+  // Undo checks still journal responses (including host perf/errors), but must
+  // not alter that record's timing/profile identity on success OR failure.
+  if(!readOnly){
+   const m=s.timing[method]||(s.timing[method]={calls:0,totalMs:0});m.calls++;m.totalMs+=Date.now()-started;
+   if(s.profile){s.profile.bridgeMs+=Date.now()-started;for(const key of Object.keys(r.perf||{})){const target=s.profile.host[key]||(s.profile.host[key]={calls:0,ms:0});target.calls+=r.perf[key].calls;target.ms+=r.perf[key].ms;}}
+  }
+  event(method,r,!readOnly);if(!r.ok)throw Error(method+': '+r.error);return r;
+ }
+ const host=(method,...args)=>callHost(false,method,...args);
+ const readOnlyHost=(method,...args)=>callHost(true,method,...args);
+ async function inspect(id,readOnly=false){for(let i=0;i<12;i++){try{return(await (readOnly?readOnlyHost:host)('inspectClip',id)).clip;}catch(e){if(!String(e).includes('not ready')||i===11)throw e;await io.pause(500);}}}
  async function begin(a){
   const beginStarted=Date.now();
   if(s&&!['finished','abandoned','converted'].includes(s.phase))throw Error('An unfinished batch must be recovered first');
@@ -18,10 +57,18 @@ module.exports=function createEngine(io){
   const definition=templates[a.template],mogrt=io.templatePath(definition[0]);if(io.hash(mogrt)!==definition[1])throw Error('Bundled MOGRT hash mismatch');
   // Archive completed history before replacing its checkpoint. No timeline edits here.
   if(s&&s.phase==='converted'){if(!io.archive)throw Error('Session archiving unavailable');io.archive(s);}
+  const previous=s,previousRestored=restoredHost;
   restoredHost=false;queued=[];
-  s={batch:io.id(),phase:'interrupted',lines:[],base:a.base};checkpoint();
+  s={batch:io.id(),phase:'interrupted',lines:[],base:a.base};
+  try{checkpoint();}catch(error){s=previous;restoredHost=previousRestored;throw error;}
   const batch=s.batch;
-  const prep=await io.host('prepare');if(!prep.ok)throw Error(prep.error);
+  const prep=await io.host('prepare');
+  if(!prep.ok){
+   // A transport failure has unknown outcome and keeps its marker. A confirmed
+   // read-only preparation refusal restores the previous completed Undo record.
+   if(prep.preparationOnly===true){s=previous;restoredHost=previousRestored;}
+   throw Error(prep.error);
+  }
   s={batch,phase:'preparing',folder:prep.folder,prep,base:a.base,template:a.template,fault:a.fault,fast:a.fast,started:beginStarted,grouped:a.grouped===true,profile:{preparationMs:Date.now()-beginStarted,host:{},bridgeMs:0,checkpointMs:0,logMs:0,groups:0},timing:{},importNativeMs:0,fusedCards:0,fallbackCards:0,lines:[],owned:false,hideAttempted:false,next:0,verified:[],mogrt};
   event('batch_begin',{batch:s.batch,base:s.base,template:a.template,fault:a.fault});
   log('RYZE_CAPTION_TOOL_V1 / '+new Date().toISOString()+' / '+s.template+' / '+(s.fault?'FAULT CHECK':'FULL CONVERSION'));
@@ -70,7 +117,7 @@ module.exports=function createEngine(io){
    return state();
   }catch(e){queued=[];s.phase='failed';log('GROUP_STOP = '+String(e));throw e;}
  }
- async function guard(){if(s.fast){const all=(await host('inspectAll')).clips;if(!equal(all,s.verified))throw Error('Generated clip changed; refusing Undo');}else{await host('guard');for(const prior of s.verified){const actual=await inspect(prior.id);if(!equal(actual,prior))throw Error('Generated clip changed; refusing Undo');}}}
+ async function guard(){if(s.fast){const all=(await readOnlyHost('inspectAll')).clips;if(!equal(all,s.verified))throw Error('Generated clip changed; refusing Undo');}else{await readOnlyHost('guard');for(const prior of s.verified){const actual=await inspect(prior.id,true);if(!equal(actual,prior))throw Error('Generated clip changed; refusing Undo');}}}
  async function complete(){
   if(s.phase!=='converting'||s.fault||s.next!==s.plan.length)throw Error('Incomplete conversion');
   await host('guard');const done=await host('complete'),after=io.snapshot(done.snapshot.path,s.prep.sequenceID);
@@ -93,6 +140,7 @@ module.exports=function createEngine(io){
   if(op==='begin')return begin(a);
   if(op==='status')return state();
   if(!s||!a||a.batch!==s.batch)throw Error('Batch identity mismatch');
+  if(op==='recoverPreparation')return recoverPreparation(a);
   if(op==='step')return step();
   if(op==='stepGroup')return stepGroup();
   if(op==='complete')return complete();
@@ -100,10 +148,10 @@ module.exports=function createEngine(io){
   if(op==='hideIntent'){if(s.phase!=='awaiting_visibility')throw Error('Wrong hide phase');event('hide_intent',{base:s.base});s.hideAttempted=true;s.phase='hiding';return state();}
   if(op==='hideAck'){if(s.phase!=='hiding'||a.muted!==true)throw Error('Invalid hide acknowledgment');event('hide_readback',{muted:true});s.phase='converted';log('SOURCE_CAPTION_HIDDEN_AFTER_SUCCESS = true');return state();}
   if(op==='restored'){if(!['hiding','converted','awaiting_visibility','failed'].includes(s.phase))throw Error('Wrong restore phase');const originals=s.base.caption.filter(t=>t.items.length).map(t=>({id:t.id,muted:t.muted}));if(a.states?!equal(a.states,originals):(originals.length!==1||a.muted!==originals[0].muted))throw Error('Wrong restored state');event('original_visibility_restored',{states:originals});s.hideAttempted=false;log('ORIGINAL_VISIBILITY_RESTORED = true');return state();}
-  if(op==='undo'){if(s.phase!=='converted')throw Error('Wrong Undo phase');await host('guard');return cleanup('UNDO');}
+  if(op==='undo'){if(s.phase!=='converted')throw Error('Wrong Undo phase');await readOnlyHost('guard');return cleanup('UNDO');}
   if(op==='rollback')return cleanup('ROLLBACK');
   throw Error('Unknown operation');
  }
- async function dispatch(op,a){if(op==='exportReport'){const text=require('./report')(a&&a.report,s),r=await io.host('exportBugReport',text);if(!r.ok)throw Error(r.error);return {reportPath:r.path};}try{const result=await dispatchInner(op,a);checkpoint();return result;}catch(e){checkpoint();throw e;}}
+ async function dispatch(op,a){if(op==='status')return state();if(op==='exportReport'){const text=require('./report')(a&&a.report,s),r=await io.host('exportBugReport',text);if(!r.ok)throw Error(r.error);return {reportPath:r.path};}if(recoveryError)throw Error(recoveryError);try{const result=await dispatchInner(op,a);checkpoint();return result;}catch(e){checkpoint();throw e;}}
  return {dispatch,state};
 };

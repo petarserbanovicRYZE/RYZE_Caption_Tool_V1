@@ -1,4 +1,4 @@
-param([switch]$Remove)
+param([switch]$Remove,[switch]$InteractiveRepair)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $data=Join-Path $env:APPDATA 'RYZE\CaptionToolV1'
@@ -8,9 +8,10 @@ $config=Join-Path $data 'connection.json'
 $id='com.ryze.captiontool.v1.uxp'
 $pluginName='RYZE Caption Tool'
 $pluginVersion='1.0.7'
+$minimumPremiereVersion=[version]'25.6.0'
 $utf8=New-Object Text.UTF8Encoding($false)
-New-Item -ItemType Directory -Path $data -Force | Out-Null
-function Log([string]$s) { [IO.File]::AppendAllText((Join-Path $data 'installer.log'),([DateTime]::UtcNow.ToString('o')+' '+$s+"`r`n"),$utf8); Write-Host $s }
+$logReady=$false
+function Log([string]$s) { if($script:logReady){[IO.File]::AppendAllText((Join-Path $data 'installer.log'),([DateTime]::UtcNow.ToString('o')+' '+$s+"`r`n"),$utf8)}; Write-Host $s }
 function UPI([string[]]$Arguments) {
  $output=& $script:upia @Arguments 2>&1; $code=$LASTEXITCODE
  foreach($line in $output){ Log ([string]$line) }
@@ -33,6 +34,30 @@ function Listing([object[]]$Lines) {
 function Current-Rows([object[]]$Rows) {
  @($Rows | Where-Object { $_.HostName -match '^Premiere Pro \(ver ' -and $_.Name -ceq $pluginName -and $_.Version -ceq $pluginVersion })
 }
+function Assert-CompatiblePremiere([object[]]$Lines) {
+ $versions=@(foreach($entry in $Lines){
+  if([string]$entry -match '^\s*\d+ extensions? installed for Premiere Pro \(ver (\d+\.\d+(?:\.\d+){0,2})\)\s*$'){
+   $hostVersion=[version]$Matches[1]
+   # Treat Adobe's optional patch component as zero, so 25.6 equals 25.6.0.
+   if($hostVersion.Build -lt 0){[version]::new($hostVersion.Major,$hostVersion.Minor,0)}else{$hostVersion}
+  }
+ })
+ if(!@($versions | Where-Object {$_ -ge $minimumPremiereVersion}).Count){
+  $detected=if($versions.Count){($versions | ForEach-Object {$_.ToString()}) -join ', '}else{'none recognized by Adobe'}
+  throw "RYZE requires Premiere $minimumPremiereVersion or newer. Adobe detected: $detected. Update Premiere through Creative Cloud before retrying."
+ }
+}
+function Assert-CurrentRows([object[]]$Rows,[switch]$Required) {
+ $ours=@(Current-Rows $Rows);$hosts=@{}
+ if($Required -and !$ours.Count){throw 'UPIA did not confirm an enabled RYZE Caption Tool 1.0.7 for Premiere.'}
+ foreach($row in $ours){
+  if($hosts.ContainsKey($row.HostName)){throw 'Duplicate RYZE entries for the same Premiere installation; cannot safely repair.'}
+  $hosts[$row.HostName]=$true
+  if($row.Status -ne 'Enabled'){throw 'RYZE 1.0.7 is disabled in a Premiere installation. Enable it in Creative Cloud and retry.'}
+ }
+ # Adobe can list the same plugin once for each installed Premiere version.
+ # Removal retains its separate, stricter name-ambiguity safeguards.
+}
 function Remove-OwnedUXP {
  $rows=@(Listing @(UPI @('/list','all')))
  $ours=@(Current-Rows $rows)
@@ -43,6 +68,85 @@ function Remove-OwnedUXP {
  UPI @('/remove',$pluginName) | Out-Null
  $after=@(Listing @(UPI @('/list','all')))
  if(@(Current-Rows $after).Count -ne 0){throw 'UPIA still lists V1 after removal; cleanup is not confirmed.'}
+}
+
+# Repair is limited to the current user's exact RYZE paths. Never follow a junction.
+function Assert-InstallPath([string]$Path,[string]$Root,[switch]$Tree) {
+ $full=[IO.Path]::GetFullPath($Path);$base=[IO.Path]::GetFullPath($Root).TrimEnd('\')
+ if(!$full.StartsWith($base+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Installer path is outside its expected directory.'}
+ $cursor=$full
+ while($cursor){
+  if(Test-Path -LiteralPath $cursor){
+   if((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'A linked installer path was found. No repair or deletion will be attempted.'}
+  }
+  $cursor=Split-Path $cursor -Parent
+ }
+ if($Tree -and (Test-Path -LiteralPath $full -PathType Container)){
+  $pending=New-Object 'Collections.Generic.Stack[string]';$pending.Push($full)
+  while($pending.Count){
+   foreach($entry in Get-ChildItem -LiteralPath $pending.Pop() -Force){
+    if($entry.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'A linked file exists in the helper tree. Repair stopped without following it.'}
+    if($entry.PSIsContainer){$pending.Push($entry.FullName)}
+   }
+  }
+ }
+}
+function Get-InstallationState([string]$ReceiptPath,[string]$HelperPath) {
+ $versions=@('1.0.0','1.0.1','1.0.2','1.0.3','1.0.4','1.0.5','1.0.6','1.0.7')
+ $known=$false;$version=$null;$recoveredReceipt=$false;$receiptExists=Test-Path -LiteralPath $ReceiptPath
+ if($receiptExists){
+  $parsed=$null;try{$parsed=Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json}catch{}
+  if($null -ne $parsed -and @('uxpID','target','version' | Where-Object {$parsed.PSObject.Properties.Name -notcontains $_}).Count -eq 0){
+   if($parsed.uxpID -cne $id -or $parsed.target -ne $HelperPath -or $parsed.version -notin $versions){throw 'Unknown or newer installation receipt. Refusing to overwrite another installation.'}
+   $known=$true;$version=$parsed.version
+  }
+ }
+ $helperExists=Test-Path -LiteralPath $HelperPath
+ if($helperExists -and !(Test-Path -LiteralPath $HelperPath -PathType Container)){throw 'The helper path is not a folder.'}
+ if(!$known -and $helperExists){
+  # Recover a missing/damaged receipt only when the helper identifies this V1 bundle.
+  $manifestPath=Join-Path $HelperPath 'CSXS/manifest.xml'
+  $settings=New-Object Xml.XmlReaderSettings;$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit;$settings.XmlResolver=$null;$settings.MaxCharactersInDocument=262144
+  $reader=$null
+  try{
+   $reader=[Xml.XmlReader]::Create($manifestPath,$settings);$doc=New-Object Xml.XmlDocument;$doc.XmlResolver=$null;$doc.Load($reader)
+   $bundle=$doc.DocumentElement;$panel=@($doc.SelectNodes('/ExtensionManifest/ExtensionList/Extension'))
+   if($bundle.Name -ne 'ExtensionManifest' -or $bundle.GetAttribute('ExtensionBundleId') -cne 'com.ryze.captiontool.v1.bridge' -or $panel.Count -ne 1 -or $panel[0].GetAttribute('Id') -cne 'com.ryze.captiontool.v1.bridge.panel' -or $bundle.GetAttribute('ExtensionBundleVersion') -notin $versions){throw 'Unrecognized helper'}
+   $version=$bundle.GetAttribute('ExtensionBundleVersion');$known=$true;$recoveredReceipt=$true
+  }catch{throw 'Helper identity cannot be verified without a valid receipt. Nothing was overwritten; preserve the folder for support.'}
+  finally{if($reader){$reader.Dispose()}}
+ }
+ if($receiptExists -and !$known){throw 'Damaged receipt and no identifiable helper. Automatic repair cannot prove ownership.'}
+ $kind=if(!$known){'Install'}elseif($version -eq $pluginVersion){'Repair'}else{'Upgrade'}
+ return [pscustomobject]@{Kind=$kind;Verified=$known;PreviousVersion=$version;RecoveredReceipt=$recoveredReceipt}
+}
+function Backup-RepairFile([string]$Source,[string]$DataPath) {
+ $archive=Join-Path $DataPath ('repair-backup-'+[Guid]::NewGuid().ToString('N'))
+ Assert-InstallPath $archive $DataPath
+ New-Item -ItemType Directory -Path $archive | Out-Null
+ $destination=Join-Path $archive ([IO.Path]::GetFileName($Source))
+ $before=(Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+ Copy-Item -LiteralPath $Source -Destination $destination
+ if((Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash -ne $before -or (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash -ne $before){throw 'Repair backup verification failed.'}
+ return $destination
+}
+function Ensure-Connection([string]$ConnectionPath,[string]$DataPath) {
+ Assert-InstallPath $ConnectionPath $DataPath
+ $backupPath=$null
+ if(Test-Path -LiteralPath $ConnectionPath){
+  $valid=$false
+  try{
+   $pair=Get-Content -LiteralPath $ConnectionPath -Raw | ConvertFrom-Json
+   $valid=($pair.port -eq 48771 -and $pair.token -is [string] -and $pair.token -cmatch '^[a-f0-9]{64}$')
+  }catch{}
+  if($valid){return [pscustomobject]@{Action='Preserved';Backup=$null}}
+  $backupPath=Backup-RepairFile $ConnectionPath $DataPath
+ }
+ $bytes=New-Object byte[] 32;$rng=[Security.Cryptography.RandomNumberGenerator]::Create()
+ try{$rng.GetBytes($bytes)}finally{$rng.Dispose()}
+ $token=([BitConverter]::ToString($bytes)).Replace('-','').ToLowerInvariant()
+ [IO.File]::WriteAllText($ConnectionPath,(@{token=$token;port=48771}|ConvertTo-Json -Compress),$utf8)
+ return [pscustomobject]@{Action=$(if($backupPath){'Repaired'}else{'Created'});Backup=$backupPath}
 }
 
 
@@ -124,10 +228,18 @@ function Backup-CompletedCheckpoint([string]$SessionPath,[string]$DataPath,$Save
  }
  return $archive
 }
-$installedCEP=$false;$attemptedUXP=$false;$createdConfig=$false;$backup=$null;$stage=$null;$oldReceipt=$null;$success=$false;$receiptTouched=$false
+$installedCEP=$false;$attemptedUXP=$false;$backup=$null;$stage=$null;$oldReceipt=$null;$success=$false;$receiptTouched=$false;$setupLock=$null;$lockHeld=$false
 try {
  Add-Type -AssemblyName System.IO.Compression
  Add-Type -AssemblyName System.IO.Compression.FileSystem
+ $setupLock=New-Object Threading.Mutex($false,('Local\RYZE.CaptionTool.V1.Setup.'+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value))
+ try{$lockHeld=$setupLock.WaitOne(0)}catch [Threading.AbandonedMutexException]{$lockHeld=$true}
+ if(!$lockHeld){throw 'Another RYZE install or repair is running. Wait for it to finish, then retry.'}
+ Assert-InstallPath $target (Join-Path $env:APPDATA 'Adobe/CEP/extensions') -Tree
+ Assert-InstallPath $data (Join-Path $env:APPDATA 'RYZE')
+ foreach($path in @($receipt,$config,(Join-Path $data 'session.json'),(Join-Path $data 'installer.log'))){Assert-InstallPath $path $data}
+ New-Item -ItemType Directory -Path $data -Force | Out-Null
+ $logReady=$true
  if (Get-Process -Name 'Adobe Premiere Pro' -ErrorAction SilentlyContinue) { throw 'Close Premiere before installing or uninstalling.' }
  $upia=Join-Path ${env:CommonProgramW6432} 'Adobe\Adobe Desktop Common\RemoteComponents\UPI\UnifiedPluginInstallerAgent\UnifiedPluginInstallerAgent.exe'
  if (!(Test-Path -LiteralPath $upia)) { throw 'Adobe UPIA was not found. Install/update Creative Cloud Desktop, then retry.' }
@@ -140,46 +252,47 @@ try {
   if($old.uxpID -ne $id -or $old.target -ne $target){throw 'Installation receipt mismatch.'}
   $pluginVersion=$old.version
   Remove-OwnedUXP
-  if(Test-Path -LiteralPath $target){Remove-Item -LiteralPath $target -Recurse -Force}
+  if(Test-Path -LiteralPath $target){Assert-InstallPath $target (Join-Path $env:APPDATA 'Adobe/CEP/extensions') -Tree;Remove-Item -LiteralPath $target -Recurse -Force}
   Remove-Item -LiteralPath $receipt -Force
   Log 'Uninstalled. Diagnostics and connection data retained. Premiere projects were not touched.'
   exit 0
  }
- if(Test-Path -LiteralPath $receipt){
-  $oldReceipt=Get-Content -LiteralPath $receipt -Raw
-  $old=$oldReceipt | ConvertFrom-Json
-  if($old.uxpID -ne $id -or $old.target -ne $target -or $old.version -notin @('1.0.0','1.0.1','1.0.2','1.0.3','1.0.4','1.0.5','1.0.6','1.0.7')){throw 'Unknown installation receipt. Refusing to overwrite another installation.'}
- }elseif(Test-Path -LiteralPath $target){throw 'Helper exists without a matching receipt. Preserve the folder and repair the installation before upgrading.'}
+ if(Test-Path -LiteralPath $receipt){$oldReceipt=Get-Content -LiteralPath $receipt -Raw}
+ $installation=Get-InstallationState $receipt $target
  $session=Join-Path $data 'session.json'
  if(Test-Path -LiteralPath $session){
   $saved=Get-Content -LiteralPath $session -Raw | ConvertFrom-Json
   if((Get-UpgradeSessionKind $saved) -eq 'completed'){
-   if(!$oldReceipt){throw 'Completed session requires a matching existing installation receipt.'}
+   if(!$installation.Verified){throw 'Completed session requires a verified existing RYZE installation.'}
    $archive=Backup-CompletedCheckpoint $session $data $saved
    Log ('COMPLETED_CHECKPOINT_PRESERVED: '+$archive)
    Log 'Completed Undo state retained unchanged. The new panel will verify the original project/sequence before permitting Undo.'
   }
  }
- $rows=@(Listing @(UPI @('/list','all')))
- $present=@(Current-Rows $rows)
- if($present.Count -gt 1){throw 'Multiple matching V1 entries; cannot safely repair.'}
- if($present.Count -eq 1 -and $present[0].Status -ne 'Enabled'){throw 'Existing 1.0.7 plugin is disabled. Enable it in Creative Cloud and retry.'}
+ $listing=@(UPI @('/list','all'))
+ Assert-CompatiblePremiere $listing
+ $rows=@(Listing $listing)
+ Assert-CurrentRows $rows
+ if($installation.Kind -eq 'Install' -and @(Current-Rows $rows).Count){$installation.Kind='Repair'}
+ Log ('INSTALL_MODE: '+$installation.Kind+'; existing RYZE files will be refreshed without deleting project or checkpoint data.')
+ if($installation.RecoveredReceipt){Log 'REPAIR_RECEIPT: recognized V1 helper; installation receipt will be recreated after Adobe confirms success.'}
  $hashes=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'payload-hashes.json') -Raw | ConvertFrom-Json
+ $payloadPaths=@{}
  foreach($item in $hashes){
   if($item.path -notmatch '^(signed-cep/[^:]+|RYZE_Caption_Tool\.ccx)$' -or $item.path.Contains('..')){throw 'Invalid payload path'}
+  if($payloadPaths.ContainsKey($item.path) -or $item.sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Duplicate payload path or invalid checksum.'}
+  $payloadPaths[$item.path]=$true
   $file=Join-Path $PSScriptRoot $item.path
   if((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.sha256){throw "Payload checksum failed: $($item.path)"}
  }
- if(!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'signed-cep\META-INF\signatures.xml'))){throw 'Missing signed CEP payload.'}
- if(Test-Path -LiteralPath $config){
-  $existing=Get-Content -LiteralPath $config -Raw | ConvertFrom-Json
-  if($existing.port -ne 48771 -or $existing.token -cnotmatch '^[a-f0-9]{64}$'){throw 'Existing connection file is invalid; preserve it and contact the builder.'}
- }else{
-  $bytes=New-Object byte[] 32;$rng=[Security.Cryptography.RandomNumberGenerator]::Create()
-  try{$rng.GetBytes($bytes)}finally{$rng.Dispose()}
-  $token=([BitConverter]::ToString($bytes)).Replace('-','').ToLowerInvariant()
-  [IO.File]::WriteAllText($config,(@{token=$token;port=48771}|ConvertTo-Json -Compress),$utf8);$createdConfig=$true
+ foreach($required in @('RYZE_Caption_Tool.ccx','signed-cep/CSXS/manifest.xml','signed-cep/META-INF/signatures.xml')){
+  if(!$payloadPaths.ContainsKey($required)){throw 'Required signed payload entry missing from checksums.'}
  }
+ if(!(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'signed-cep\META-INF\signatures.xml'))){throw 'Missing signed CEP payload.'}
+ if($oldReceipt){Log ('REPAIR_RECEIPT_BACKUP: '+(Backup-RepairFile $receipt $data))}
+ $connectionResult=Ensure-Connection $config $data
+ Log ('PAIRING_DATA: '+$connectionResult.Action+'; credential not logged.')
+ if($connectionResult.Backup){Log ('REPAIR_CONNECTION_BACKUP: '+$connectionResult.Backup)}
  $stage=Join-Path $data ('setup-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $stage | Out-Null
  $configured=Join-Path $stage 'RYZE_Caption_Tool.ccx'
  Configure-Package (Join-Path $PSScriptRoot 'RYZE_Caption_Tool.ccx') $configured $config
@@ -187,33 +300,49 @@ try {
  New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
  if(Test-Path -LiteralPath $target){
   $backup=Join-Path $data ('helper-backup-'+[Guid]::NewGuid().ToString('N'))
+  Assert-InstallPath $target (Join-Path $env:APPDATA 'Adobe/CEP/extensions') -Tree
+  Assert-InstallPath $backup $data
   Move-Item -LiteralPath $target -Destination $backup
  }
  $installedCEP=$true
- Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'signed-cep') -Destination $target -Recurse
+ # Only copy this build's listed files: an older Inno installation can leave stale
+ # cached files under {app}/signed-cep that would invalidate the new CEP signature.
+ New-Item -ItemType Directory -Path $target -Force | Out-Null
+ foreach($item in $hashes){
+  if($item.path.StartsWith('signed-cep/')){
+   $installedFile=Join-Path $target $item.path.Substring('signed-cep/'.Length)
+   Assert-InstallPath $installedFile $target
+   New-Item -ItemType Directory -Path (Split-Path $installedFile) -Force | Out-Null
+   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $item.path) -Destination $installedFile
+   if((Get-FileHash -LiteralPath $installedFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.sha256){throw 'Installed helper verification failed.'}
+  }
+ }
+ Log 'HELPER_FILES_VERIFIED: installed signed payload matches builder hashes.'
  # Always submit the configured package. Never reuse 1.0.0 or an unpaired 1.0.7 registration.
  $attemptedUXP=$true
  UPI @('/install',$configured) | Out-Null
  $after=@(Listing @(UPI @('/list','all')))
- $installed=@(Current-Rows $after)
- if($installed.Count -ne 1 -or $installed[0].Status -ne 'Enabled'){throw 'UPIA did not confirm exactly one enabled RYZE Caption Tool 1.0.7 for Premiere.'}
+ Assert-CurrentRows $after -Required
  Log 'UPIA_NAME_VERSION_VERIFIED: Premiere / RYZE Caption Tool / 1.0.7 / Enabled'
  $receiptTouched=$true
  [IO.File]::WriteAllText($receipt,(@{uxpID=$id;target=$target;version=$pluginVersion;installed=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json),$utf8)
  $success=$true
- Log 'Installed 1.0.7. Open Premiere > Window > UXP Plugins > RYZE Caption Tool. Pairing is automatic.'
+ Log ($installation.Kind+' completed: 1.0.7. Open Premiere > Window > UXP Plugins > RYZE Caption Tool. Pairing is automatic.')
  Log 'No CEP debug registry flags were changed. Runtime acceptance and speed measurement still required.'
 }catch{
  Log ('INSTALLER_STOP: '+$_.Exception.Message)
  if(!$Remove){
   if($attemptedUXP){Log 'ADOBE_REGISTRATION_CHECK_REQUIRED: Adobe may have updated its plugin before stopping. No ambiguous name-based removal was attempted. Keep Premiere closed and rerun Setup; retain installer.log if it fails.'}
-  if($installedCEP -and (Test-Path -LiteralPath $target)){try{Remove-Item -LiteralPath $target -Recurse -Force}catch{Log ('HELPER_CLEANUP_FAILED: '+$_.Exception.Message)}}
-  if($backup -and (Test-Path -LiteralPath $backup)){try{Move-Item -LiteralPath $backup -Destination $target;$backup=$null;Log 'Previous helper restored.'}catch{Log ('HELPER_RESTORE_FAILED: '+$_.Exception.Message)}}
+  if($installedCEP -and (Test-Path -LiteralPath $target)){try{Assert-InstallPath $target (Join-Path $env:APPDATA 'Adobe/CEP/extensions') -Tree;Remove-Item -LiteralPath $target -Recurse -Force}catch{Log ('HELPER_CLEANUP_FAILED: '+$_.Exception.Message)}}
+  if($backup -and (Test-Path -LiteralPath $backup)){try{Assert-InstallPath $backup $data -Tree;Assert-InstallPath $target (Join-Path $env:APPDATA 'Adobe/CEP/extensions');if(Test-Path -LiteralPath $target){throw 'Helper destination is still occupied; backup retained.'};Move-Item -LiteralPath $backup -Destination $target;$backup=$null;Log 'Previous helper restored.'}catch{Log ('HELPER_RESTORE_FAILED: '+$_.Exception.Message)}}
   # Keep the connection credential: Adobe may have installed the configured UXP package.
   if($receiptTouched){if($oldReceipt){[IO.File]::WriteAllText($receipt,$oldReceipt,$utf8)}elseif(Test-Path -LiteralPath $receipt){Remove-Item -LiteralPath $receipt -Force}}
  }
 }finally{
- if($stage -and (Test-Path -LiteralPath $stage)){try{Remove-Item -LiteralPath $stage -Recurse -Force}catch{Log 'Could not remove private setup staging folder.'}}
- if($success -and $backup -and (Test-Path -LiteralPath $backup)){try{Remove-Item -LiteralPath $backup -Recurse -Force}catch{Log 'Previous helper backup retained.'}}
+ if($stage -and (Test-Path -LiteralPath $stage)){try{Assert-InstallPath $stage $data -Tree;Remove-Item -LiteralPath $stage -Recurse -Force}catch{Log 'Could not remove private setup staging folder.'}}
+ if($success -and $backup -and (Test-Path -LiteralPath $backup)){Log ('REPAIR_HELPER_BACKUP_RETAINED: '+$backup)}
+ if($lockHeld){$setupLock.ReleaseMutex()}
+ if($setupLock){$setupLock.Dispose()}
 }
+if($InteractiveRepair){Write-Host ('Details: '+(Join-Path $data 'installer.log'));Read-Host 'Press Enter to close' | Out-Null}
 if($success){exit 0}else{exit 1}

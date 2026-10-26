@@ -65,19 +65,39 @@ RYZEV1.exportSnapshot=function(seq,name){
  if(!f.exists||f.length<1)throw Error('Snapshot export did not create a file');
  return {path:f.fsName,bytes:f.length,returnValue:String(result)};
 };
+// Version eligibility is not a promise about future Adobe APIs or project formats.
+// Check the required host operations before creating state or editing the timeline.
+RYZEV1.checkCompatibility=function(seq){
+ var version=String(app.version),parts=/^(\d+)\.(\d+)(?:\.(\d+))?(?:\.\d+)?$/.exec(version);
+ if(!parts||Number(parts[1])<25||(Number(parts[1])===25&&Number(parts[2])<6))throw Error('RYZE requires Premiere 25.6 or newer; detected '+version+'.');
+ function need(object,name){
+  var type=object?typeof object[name]:'undefined';
+  // ExtendScript may report native host methods as "unknown" instead of "function".
+  if(type!=='function'&&type!=='unknown')throw Error('Premiere '+version+' is missing required API '+name+'; conversion stopped before timeline edits.');
+ }
+ need(seq,'exportAsProject');need(seq,'importMGT');need(app,'enableQE');
+ app.enableQE();
+ if(typeof qe==='undefined')throw Error('Premiere '+version+' does not expose the required QE bridge.');
+ need(qe.project,'getActiveSequence');
+ var qeSeq=qe.project.getActiveSequence();
+ if(!qeSeq||String(qeSeq.name)!==String(seq.name)||String(qeSeq.guid).replace(/[{}]/g,'').toLowerCase()!==String(seq.sequenceID).replace(/[{}]/g,'').toLowerCase())throw Error('QE/standard sequence identity mismatch; conversion stopped before timeline edits.');
+ need(qeSeq,'addTracks');need(qeSeq,'removeVideoTrack');
+ return {minimum:'25.6.0',version:version,policy:'capability-checked'};
+};
 RYZEV1.prepare=function(){
+ var previous=RYZEV1.state;
  try{
   if(RYZEV1.state && RYZEV1.state.phase!=='finished'&&RYZEV1.state.phase!=='converted')throw Error('An unfinished batch must be recovered before another run.');
   var seq=app.project.activeSequence;if(!seq)throw Error('No active sequence');
-  if(String(app.version)!=='26.5.1')throw Error('This V1 candidate is validated only on Premiere 26.5.1.');
+  var compatibility=RYZEV1.checkCompatibility(seq);
   if(!String(app.project.path))throw Error('Save the project before converting.');
   var baseline=RYZEV1.snapshot(seq);if(!baseline.video.length)throw Error('Test requires an existing video track');
   var folder=new Folder(Folder.desktop.fsName+'/RYZE_Caption_Tool_V1_'+new Date().getTime()+'_'+Math.floor(Math.random()*1000000));
   if(folder.exists||!folder.create())throw Error('Cannot create a new diagnostic folder');
   RYZEV1.state={phase:'prepared',folder:folder.fsName,projectPath:String(app.project.path),sequenceID:String(seq.sequenceID),baseline:baseline};
   var exported=RYZEV1.exportSnapshot(seq,'before.prproj');
-  return RYZEV1.json({ok:true,folder:folder.fsName,sequenceID:seq.sequenceID,host:String(app.version),timebase:String(seq.timebase),baseline:baseline,snapshot:exported});
- }catch(e){return RYZEV1.json({ok:false,error:String(e)});}
+  return RYZEV1.json({ok:true,folder:folder.fsName,sequenceID:seq.sequenceID,host:String(app.version),compatibility:compatibility,timebase:String(seq.timebase),baseline:baseline,snapshot:exported});
+  }catch(e){RYZEV1.state=previous;return RYZEV1.json({ok:false,error:String(e),preparationOnly:true});}
 };
 RYZEV1.add=function(){
  try{

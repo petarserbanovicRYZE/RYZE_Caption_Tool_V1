@@ -1,9 +1,11 @@
 'use strict';
 const difference=require('./difference');
 module.exports=function(ppro){
- async function call(o,name,...args){if(!o||typeof o[name]!=='function')throw Error(name+' unavailable');return await o[name](...args);}
+ function need(o,name){if(!o||typeof o[name]!=='function')throw Error('Required Premiere API '+name+' unavailable. RYZE requires Premiere 25.6+ with caption APIs.');}
+ async function call(o,name,...args){need(o,name);return await o[name](...args);}
  function id(v){if(v===undefined||v===null)throw Error('Track identity unavailable');return String(v);}
  async function snapshot(sequence){
+  if(!ppro.Constants||!ppro.Constants.TrackItemType||typeof ppro.Constants.TrackItemType.CLIP!=='number')throw Error('Required Premiere TrackItemType.CLIP unavailable');
   const result={guid:String(sequence.guid),name:String(sequence.name),video:[],audio:[],caption:[]};
   if(!/^[{]?[0-9a-f-]{36}[}]?$/i.test(result.guid))throw Error('Sequence GUID unavailable');
   for(const group of ['Video','Audio','Caption']){
@@ -15,6 +17,8 @@ module.exports=function(ppro){
     if(seen.has(trackID))throw Error('Ambiguous '+group+' track IDs');seen.add(trackID);
     const items=await call(track,'getTrackItems',ppro.Constants.TrackItemType.CLIP,false);
     if(!Array.isArray(items)||items.length>10000)throw Error('Unexpected track item collection');
+    // Check the later visibility write now, before conversion can import any MOGRTs.
+    if(group==='Caption'&&items.length)need(track,'setMute');
     const muted=await call(track,'isMuted');if(typeof muted!=='boolean')throw Error('Non-boolean mute state');
     const record={index:i,id:trackID,name:String(track.name),muted,items:[]};
     for(const item of items){

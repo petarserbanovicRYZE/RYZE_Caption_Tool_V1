@@ -81,6 +81,9 @@ need_dir "$PAYLOAD_CEP" "CEP payload directory"
 need_dir "$PAYLOAD_HELPER" "helper payload directory"
 need_dir "$MAC_DIR/package/scripts" "package scripts directory"
 need_file "$SOURCE_UXP/manifest.json" "UXP manifest"
+need_file "$SOURCE_UXP/build-info.json" "UXP build identity"
+need_file "$SOURCE_CEP/build-info.json" "helper build identity"
+cmp -s "$SOURCE_UXP/build-info.json" "$SOURCE_CEP/build-info.json" || fail "UXP/helper build identities differ"
 need_file "$SOURCE_UXP/installer-config.json" "UXP pairing placeholder"
 need_file "$SOURCE_CEP/CSXS/manifest.xml" "CEP manifest"
 need_file "$SOURCE_CEP/bridge.js" "CEP helper entry point"
@@ -94,6 +97,7 @@ need_file "$SOURCE_CEP/assets/mogrts/RYZE_Stroke_V1.mogrt" "Stroke MOGRT"
 need_file "$MAC_DIR/package/Distribution.xml" "Distribution template"
 need_file "$MAC_DIR/package/scripts/preinstall" "preinstall script"
 need_file "$MAC_DIR/package/scripts/postinstall" "postinstall script"
+need_file "$MAC_DIR/package/scripts/installer-support.js" "installer registration/receipt support"
 need_file "$PAYLOAD_HELPER/helper-info.json" "helper metadata"
 
 UXP_ID="$(json_string id "$SOURCE_UXP/manifest.json")"
@@ -158,7 +162,9 @@ WORK_DIR="$(mktemp -d "$MAC_DIR/.build.XXXXXX")"
 cleanup() {
   rm -rf -- "$WORK_DIR"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 MAC_CEP_SOURCE="$WORK_DIR/cep-source"
 mkdir -p "$MAC_CEP_SOURCE/helper"
@@ -288,7 +294,9 @@ pkgbuild \
 RESOLVED_DISTRIBUTION="$WORK_DIR/Distribution.xml"
 sed "s/__VERSION__/$VERSION/g" "$MAC_DIR/package/Distribution.xml" > "$RESOLVED_DISTRIBUTION"
 
-rm -f -- "$FINAL_PKG"
+# Keep the last good installer until the replacement has passed verification.
+mkdir -p "$WORK_DIR/final"
+CANDIDATE_PKG="$WORK_DIR/final/RYZE_Caption_Tool_Mac.pkg"
 if [[ -n "${INSTALLER_SIGNING_IDENTITY:-}" ]]; then
   need_command security
   security find-identity -v | grep -Fq "\"$INSTALLER_SIGNING_IDENTITY\"" || fail "Installer signing identity not found: $INSTALLER_SIGNING_IDENTITY"
@@ -296,15 +304,16 @@ if [[ -n "${INSTALLER_SIGNING_IDENTITY:-}" ]]; then
     --distribution "$RESOLVED_DISTRIBUTION" \
     --package-path "$WORK_DIR" \
     --sign "$INSTALLER_SIGNING_IDENTITY" \
-    "$FINAL_PKG"
+    "$CANDIDATE_PKG"
 else
   note "No INSTALLER_SIGNING_IDENTITY supplied; building an unsigned internal-testing package."
   productbuild \
     --distribution "$RESOLVED_DISTRIBUTION" \
     --package-path "$WORK_DIR" \
-    "$FINAL_PKG"
+    "$CANDIDATE_PKG"
 fi
 
-need_file "$FINAL_PKG" "final package"
-"$MAC_DIR/verify-mac-build.sh" "$FINAL_PKG"
+need_file "$CANDIDATE_PKG" "candidate package"
+"$MAC_DIR/verify-mac-build.sh" "$CANDIDATE_PKG"
+mv -f "$CANDIDATE_PKG" "$FINAL_PKG"
 note "BUILT: $FINAL_PKG"

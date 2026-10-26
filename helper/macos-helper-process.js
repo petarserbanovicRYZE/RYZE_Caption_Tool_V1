@@ -54,16 +54,19 @@ async function start(options={}){
  const initial=await waitForBridge(req,bridgePath,config.token);
  const generation=initial.generation;
 
- let cachedState=initial.state;
+ let cachedState=initial.state,activeCommands=0;
  const engine={
   state:()=>cachedState,
   dispatch:async(op,args)=>{
    // The HTTP layer retains the original promise for retry/deduplication. Do not
    // time out an engine mutation while Premiere is still carrying it out.
-   const response=await bridgeRequest(req,bridgePath,config.token,{type:'dispatch',generation,id:crypto.randomBytes(16).toString('hex'),op,args},0);
-   if(response.state)cachedState=response.state;
-   if(!response.ok){const error=Error(response.error||'CEP engine command failed');error.state=response.state;throw error;}
-   return response.state;
+   activeCommands++;
+   try{
+    const response=await bridgeRequest(req,bridgePath,config.token,{type:'dispatch',generation,id:crypto.randomBytes(16).toString('hex'),op,args},0);
+    if(response.state)cachedState=response.state;
+    if(!response.ok){const error=Error(response.error||'CEP engine command failed');error.state=response.state;throw error;}
+    return response.state;
+   }finally{activeCommands--;}
   }
  };
  const serverFactory=req(path.join(root,'server.js'));
@@ -102,25 +105,26 @@ async function start(options={}){
 
  let failures=0,checking=false;
  const health=setInterval(async()=>{
-  if(checking||stopped)return;checking=true;
+  if(checking||stopped||activeCommands)return;checking=true;
   try{
    const response=await bridgeRequest(req,bridgePath,config.token,{type:'ping'},1000);
    if(!response.ok||response.generation!==generation){log('HELPER_ENGINE_SESSION_CHANGED');return stop();}
-   cachedState=response.state;failures=0;
+   if(!activeCommands)cachedState=response.state;failures=0;
   }
   catch(error){
+   if(activeCommands){failures=0;return;}
    failures++;
-   if(failures>=2){log('HELPER_ENGINE_BRIDGE_LOST '+String(error));stop();}
+   if(failures>=5){log('HELPER_ENGINE_BRIDGE_LOST '+String(error));stop(1);}
   }
   finally{checking=false;}
  },2000);
  if(typeof health.unref==='function')health.unref();
- const stop=()=>{
+ const stop=(exitCode=0)=>{
   if(stopped)return;stopped=true;clearInterval(health);clearTimeout(retryTimer);
-  const force=setTimeout(()=>processModule.exit(0),1000);if(force.unref)force.unref();
-  server.close(()=>{clearTimeout(force);processModule.exit(0);});
+  const force=setTimeout(()=>processModule.exit(exitCode),1000);if(force.unref)force.unref();
+  server.close(()=>{clearTimeout(force);processModule.exit(exitCode);});
  };
- processModule.once('SIGTERM',stop);processModule.once('SIGINT',stop);
+ processModule.once('SIGTERM',()=>stop());processModule.once('SIGINT',()=>stop());
  return server;
 }
 

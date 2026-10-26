@@ -10,5 +10,8 @@ const ppro={Constants:{TrackItemType:{CLIP:1}},Project:{getActiveProject:async()
  assert.throws(()=>vis.beforeHide(base,{...good,caption:[{...base.caption[0],muted:true}]},output));
  seq.guid='other';await assert.rejects(()=>vis.set(base,true),/sequence changed/);assert.strictEqual(muted,false);
  seq.guid=guid;track.id=9;await assert.rejects(()=>vis.set(base,true),/identity changed/);assert.strictEqual(muted,false);
+ const setMute=track.setMute;delete track.setMute;
+ await assert.rejects(()=>vis.capture(),/setMute unavailable/);assert.strictEqual(muted,false,'Capability probe must not change visibility');track.setMute=setMute;
+ delete ppro.Constants.TrackItemType.CLIP;await assert.rejects(()=>vis.capture(),/TrackItemType.CLIP unavailable/);
  console.log('PASS UXP mock: visibility readback/restoration, identity refusal, cross-API output track checks and original caption state guard.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -14,7 +14,13 @@ module.exports=function(api,vis,emit){
  }}
  async function rollback(){await restore();await cmd('rollback');vis.restored(base,await vis.capture());log('ROLLBACK_BASELINE_VERIFIED = true');}
  async function attach(){
-  await cmd('status');converted=current.phase==='converted';
+  await cmd('status');
+  if(current.phase==='recovery_required')throw Error('Session recovery is required. '+(current.lines||[]).join('\n'));
+  if(current.phase==='interrupted'&&current.preparationRecoverable===true){
+   try{await cmd('recoverPreparation',{observed:await vis.capture()});}
+   catch(e){throw Error('Preparation recovery stopped. Open the original unchanged sequence and reconnect, or save diagnostics. '+String(e));}
+  }
+  converted=current.phase==='converted';
   if(!['idle','finished','abandoned','converted'].includes(current.phase))throw Error('An unfinished session was found. Automatic edits are blocked. Save diagnostics and restore your saved project copy if needed.');
   base=converted?current.base:null;
   // A saved completed batch is Undo history, never the input for a new Convert.

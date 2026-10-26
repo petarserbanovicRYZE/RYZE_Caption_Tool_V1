@@ -1,4 +1,68 @@
-# RYZE Caption Tool V1.0.6 candidate — 2026-09-24
+# RYZE Caption Tool V1.0.7 recovery audit — 2026-10-22
+
+Current source revision: `recovery-audit-20261022.1`. Local fixes cover preparation
+locks, retained Undo records, corrupted-checkpoint diagnostics, Mac child health
+and restart failures, HTTP timeouts, mixed build revisions, report retention, and
+Mac installer verification/rollback. See `mac-builder/MAC_AUDIT.md` for evidence
+and remaining limits.
+
+The October 22 follow-up prevents read-only Undo timing diagnostics from changing
+an already archived completed record after a refused preparation. The exact
+archive comparison and timeline safety guards remain intact. Existing divergent
+histories are not overwritten. A regression test reproduces the old failure and
+checks subsequent retries/reconnect and valid preparation.
+
+Passed locally: 23 JavaScript suites, two Windows installer test suites, original
+MOGRT hashes, source validation, Bash syntax, YAML parsing and payload consistency.
+Windows installer/build scripts were not changed by this audit; earlier repair
+changes below remain intact. MOGRT content and text/layout/parser logic are unchanged.
+
+No installer was rebuilt or published in this audit. The October 14 Windows EXE
+and any previously downloaded Mac PKG do **not** include the current source fixes.
+Run the updated GitHub Mac Build workflow after committing/pushing the reviewed
+changes; download the new PKG plus BUILD_INFO.json. Test installation and all three
+styles/Undo on the actual teammate Mac before treating this as a working release.
+No local test substitutes for Adobe UPIA, CEP lifecycle, Premiere or Gatekeeper.
+
+## Previous Windows compatibility + repair preview — 2026-10-14
+
+Built a real Windows installer locally using the existing Windows builder,
+Adobe ZXPSignCmd and Inno Setup 6.7.3:
+
+- File: `dist/RYZE_Caption_Tool_Setup.exe` (3,403,963 bytes).
+- SHA-256: `2b55941aea02ca3b28e2264dbf7488e1603d5f24291e39875c05d7b7a95decf6`.
+- CEP helper: signed with a local internal-preview certificate; signature verified.
+- Windows EXE: **NotSigned** (no trusted Windows publisher certificate configured).
+- Detailed report: `dist/RYZE_RELEASE_VERIFICATION.json`; no malware/IT approval claimed.
+
+Premiere eligibility is now 25.6+, including 26.3, without an artificial upper
+version cap. Required API checks and existing conversion/Undo guards remain.
+See `COMPATIBILITY.md` for limits and the real-host acceptance checklist.
+
+Rerun Setup with Premiere closed to automatically install, upgrade or repair a
+recognized V1 installation. A Start Menu repair shortcut is included. Repair keeps
+valid pairing data and completed Undo checkpoints, backs up replaced files, restores
+missing helper files, and can recover damaged pairing or an identifiable helper's
+missing receipt. It stops for interrupted conversions, unknown/newer installations,
+linked paths or disabled Adobe registrations. It does not delete Adobe plugin
+databases or uninstall by an ambiguous name. Stale cached files are excluded from
+the refreshed signed helper. Failed Adobe installation restores the old helper,
+but Adobe registration itself can require rerunning Setup.
+
+Verified locally: existing JS regression suite, compatibility/missing-API checks,
+PowerShell unit tests and 11 isolated full installer-flow cases (including injected
+Adobe failure/rollback), package/source equality, CEP signing and Inno compilation.
+The isolated cases use test-only Adobe stubs; no real Adobe installation is claimed.
+Actual installation, conversion and Undo on the teammate's Premiere 26.3 remain
+unverified. This is an internal testing artifact, not a certified production release.
+
+The prior EXE was preserved under `build/previous-installer-67cdfbfb23694669ae532dc5781a84c2/`.
+Nothing was committed or pushed, and no Mac package was built in this Windows run.
+
+## Historical V1.0.6 candidate notes — 2026-09-24
+
+The following records the earlier deliverable; its packaging/version restrictions
+are superseded by the V1.0.7 notes above.
 
 This is a source + Windows EXE builder deliverable, not a certified production
 release. There is no precompiled EXE in this ZIP. No Windows compiler or Premiere

@@ -10,10 +10,33 @@ permissions:
   contents: read
 
 jobs:
+  check-windows-regressions:
+    name: Check Windows regressions without installing
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+      - name: Validate shared source and regression suites
+        shell: powershell
+        run: |
+          node builder/validate.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node diagnostics/run-tests.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test isolated Windows installer repair
+        shell: powershell
+        run: |
+          & ./diagnostics/test-installer.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./diagnostics/test-installer-repair.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   build-macos-installer:
     name: Build unsigned macOS installer
     runs-on: macos-latest
     timeout-minutes: 30
+    needs: check-windows-regressions
 
     steps:
       - name: Check out repository
@@ -30,6 +53,7 @@ jobs:
           test -f mac-builder/ci-check.sh
           test -f mac-builder/package/scripts/preinstall
           test -f mac-builder/package/scripts/postinstall
+          test -f mac-builder/package/scripts/installer-support.js
           test -f helper/macos-launcher.js
           test -f helper/macos-helper-process.js
           test -f helper/launch-mac-helper
@@ -47,11 +71,9 @@ jobs:
         shell: bash
         run: |
           ./mac-builder/ci-check.sh
-          node diagnostics/test-macos-launcher.js
-          node diagnostics/test-macos-helper-process.js
-          node diagnostics/test-connect.js
-          node diagnostics/test-panel.js
-          bash -n mac-builder/build.sh mac-builder/bundle-node.sh mac-builder/package/scripts/preinstall mac-builder/package/scripts/postinstall helper/launch-mac-helper
+          node builder/validate.js
+          node diagnostics/run-tests.js
+          bash -n mac-builder/build.sh mac-builder/ci-check.sh mac-builder/verify-mac-build.sh mac-builder/bundle-node.sh mac-builder/package/scripts/preinstall mac-builder/package/scripts/postinstall helper/launch-mac-helper
 
       - name: Build macOS installer
         shell: bash
@@ -63,11 +85,14 @@ jobs:
           set -euo pipefail
           test -s mac-builder/output/RYZE_Caption_Tool_Mac.pkg
           RYZE_RUNTIME_TEST=1 ./mac-builder/verify-mac-build.sh mac-builder/output/RYZE_Caption_Tool_Mac.pkg
+          node mac-builder/write-build-info.js
 
       - name: Upload macOS installer
         uses: actions/upload-artifact@v7.0.1
         with:
           name: RYZE_Caption_Tool_Mac
-          path: mac-builder/output/RYZE_Caption_Tool_Mac.pkg
+          path: |
+            mac-builder/output/RYZE_Caption_Tool_Mac.pkg
+            mac-builder/output/BUILD_INFO.json
           if-no-files-found: error
           retention-days: 14

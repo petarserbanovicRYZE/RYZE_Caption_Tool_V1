@@ -38,6 +38,7 @@ if(process.argv[2]==='--bridge'){
    fs.writeFileSync(path.join(data,'runtime-mac.json'),JSON.stringify({schema:1,build:'1.0.7',nodePath:process.execPath}));
    for(const file of ['macos-helper-process.js','macos-launcher.js'])fs.copyFileSync(path.join(__dirname,'../helper',file),path.join(root,'helper',file));
    fs.copyFileSync(path.join(__dirname,'../cep/server.js'),path.join(root,'server.js'));
+   fs.copyFileSync(path.join(__dirname,'../cep/build-info.json'),path.join(root,'build-info.json'));
    fs.writeFileSync(path.join(root,'engine.js'),`module.exports=()=>{let count=0;return {state:()=>({phase:'converted',count}),dispatch:async op=>{if(op==='slow'){count++;await new Promise(r=>setTimeout(r,400));}return {phase:'converted',count};}}};`);
    let owner=bridge();
    let status=await until(async()=>{const s=await call('/status');return s.ok&&s;});

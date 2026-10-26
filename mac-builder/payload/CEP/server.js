@@ -5,7 +5,7 @@ module.exports=function(http,token,epoch,engine,onError){
  const server=http.createServer(async(req,res)=>{
   function reply(status,value){if(res.destroyed)return;res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','Connection':'close'});res.end(JSON.stringify(value));}
   if(req.headers.host!=='127.0.0.1:48771'||req.headers.authorization!=='Bearer '+token)return reply(403,{ok:false,error:'Unauthorized'});
-  if(req.method==='GET'&&req.url==='/status')return reply(200,{ok:true,build:'1.0.7',epoch,state:engine.state()});
+  if(req.method==='GET'&&req.url==='/status')return reply(200,{ok:true,build:'1.0.7',revision:require('./build-info.json').revision,epoch,state:engine.state()});
   if(req.method!=='POST'||req.url!=='/command')return reply(404,{ok:false,error:'Unknown route'});
   try{
    const raw=await new Promise((resolve,reject)=>{let size=0,chunks=[];req.on('data',b=>{size+=b.length;if(size>1048576){reject(Error('Request too large'));req.destroy();}else chunks.push(b);});req.on('end',()=>resolve(Buffer.concat(chunks).toString('utf8')));req.on('error',reject);});
