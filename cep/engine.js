@@ -1,7 +1,7 @@
 'use strict';
 const {setText,textValue}=require('./text');const match=require('./match');
 const templates={V3:['RYZE_Box_V3.mogrt','22e6acb94b560e24ba4b025afac6b989dc151100cf6f01bf87898513738757bd'],V5:['RYZE_Box_V5.mogrt','72418fd40cb4233cbd54a426a791732dca332af29094d6ace8d2e00d0b6f86b8'],Stroke:['RYZE_Stroke_V1.mogrt','21ad2731dd319a952c5cfb166b2cedf9e0ed06003b6b311b029e1159a24e1813']};
-module.exports=function createEngine(io){
+module.exports=function createEngine(io,options={}){
  let s=null,recoveryError=null;
  try{
   s=io.load?io.load():null;
@@ -19,20 +19,29 @@ module.exports=function createEngine(io){
  function log(text){const t=Date.now();s.lines.push(text);io.append(s.folder,'report.txt',text+'\n');if(s.profile)s.profile.logMs+=Date.now()-t;}
  function event(kind,value,measure=true){const t=Date.now();io.append(s.folder,'journal.ndjson',JSON.stringify({time:new Date().toISOString(),kind,value})+'\n');if(measure&&s.profile)s.profile.logMs+=Date.now()-t;}
  function preparationOnly(){return !!(s&&s.phase==='interrupted'&&equal(Object.keys(s).sort(),['base','batch','lines','phase'])&&/^[a-f0-9]{32}$/.test(s.batch)&&Array.isArray(s.lines)&&!s.lines.length&&s.base&&typeof s.base.guid==='string'&&['video','audio','caption'].every(k=>Array.isArray(s.base[k])));}
- function state(){return s?{batch:s.batch,phase:s.phase,folder:s.folder,lines:(s.lines||[]).slice(),base:s.base,next:s.next,total:s.plan?s.plan.length:0,hideAttempted:s.hideAttempted,owned:s.owned,output:s.output,outputs:s.outputs,fast:s.fast,conversionMs:s.conversionMs,cleanupMs:s.cleanupMs,preparationRecoverable:preparationOnly()}: {phase:'idle',lines:[]};}
+ function state(){return s?{batch:s.batch,phase:s.phase,folder:s.folder,lines:(s.lines||[]).slice(),base:s.base,next:s.next,total:s.plan?s.plan.length:0,hideAttempted:s.hideAttempted,owned:s.owned,output:s.output,outputs:s.outputs,fast:s.fast,conversionMs:s.conversionMs,cleanupMs:s.cleanupMs,preparationRecoverable:preparationOnly(),...(options.recoverInactivePreparation===true&&preparationOnly()?{preparationRecoveryMode:'inactive-host'}:{})}: {phase:'idle',lines:[]};}
  async function recoverPreparation(a){
   // Only the exact legacy pre-prepare marker is eligible. Never clear conversion,
   // visibility, Undo, malformed or unknown checkpoints. No timeline edits here.
-  if(!preparationOnly()||!equal(a.observed,s.base))throw Error('Preparation recovery requires the original unchanged sequence; save diagnostics before changing anything.');
+  if(!preparationOnly())throw Error('Preparation recovery requires the original unchanged sequence; save diagnostics before changing anything.');
+  const unchanged=equal(a.observed,s.base),macRecovery=options.recoverInactivePreparation===true;
+  if(!unchanged&&!macRecovery)throw Error('Preparation recovery requires the original unchanged sequence; save diagnostics before changing anything.');
   if(typeof io.archive!=='function')throw Error('Preparation backup unavailable; saved session was not cleared.');
   const live=await io.host('status');
+  if(macRecovery&&(!live||live.ok!==true||!Object.prototype.hasOwnProperty.call(live,'state')||(live.state!==null&&(!live.state||typeof live.state!=='object'||Array.isArray(live.state)))))throw Error('Host recovery state unavailable; saved preparation was retained.');
+  // The exact marker is written before prepare; begin must finish and checkpoint
+  // before any step can edit the timeline. On a fresh Mac host, state:null proves
+  // there is no live batch to cancel. Archive only this marker, without requiring
+  // the user's current project to reproduce an earlier read-only preparation.
+  const inactive=macRecovery&&live.state===null;
+  if(!unchanged&&!inactive)throw Error('Preparation recovery is blocked by a live host session. Close and reopen Premiere, then reconnect. Saved sequence: '+String(s.base.name||s.base.guid)+'.');
   if(!live||!live.ok||(live.state&&!['finished','prepared'].includes(live.state.phase)))throw Error('Host owns an unfinished batch; automatic recovery refused.');
   io.archive(s); // Durable backup must succeed BEFORE clearing any state.
   if(live.state&&live.state.phase==='prepared'){
    const cancelled=await io.host('cancelPrepared');
    if(!cancelled||!cancelled.ok)throw Error(cancelled&&cancelled.error||'Preparation could not be safely abandoned.');
   }
-  s={...s,phase:'abandoned',lines:['PREPARATION_RECOVERED = original sequence unchanged; previous checkpoint retained in history. No timeline edits.']};
+  s={...s,phase:'abandoned',lines:[inactive?'PREPARATION_RECOVERED = inactive Mac host; pre-conversion checkpoint retained in history. No timeline edits.':'PREPARATION_RECOVERED = original sequence unchanged; previous checkpoint retained in history. No timeline edits.']};
   return state();
  }
  async function callHost(readOnly,method,...args){

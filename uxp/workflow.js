@@ -17,8 +17,18 @@ module.exports=function(api,vis,emit){
   await cmd('status');
   if(current.phase==='recovery_required')throw Error('Session recovery is required. '+(current.lines||[]).join('\n'));
   if(current.phase==='interrupted'&&current.preparationRecoverable===true){
-   try{await cmd('recoverPreparation',{observed:await vis.capture()});}
-   catch(e){throw Error('Preparation recovery stopped. Open the original unchanged sequence and reconnect, or save diagnostics. '+String(e));}
+   const macRecovery=current.preparationRecoveryMode==='inactive-host';
+   try{
+    let observed;
+    try{observed=await vis.capture();}
+    catch(e){if(!macRecovery)throw e;observed=null;log('PREPARATION_CAPTURE_UNAVAILABLE = '+String(e.message||e));}
+    if(macRecovery){
+     log('PREPARATION_SESSION = '+JSON.stringify({batch:current.batch,sequence:current.base&&current.base.name,guid:current.base&&current.base.guid}));
+     log('PREPARATION_DIFFERENCE = '+(observed===null?'no active timeline snapshot':(require('./difference')(current.base,observed)||'none').slice(0,2000)));
+    }
+    await cmd('recoverPreparation',{observed});
+   }
+   catch(e){throw Error(macRecovery?'Preparation recovery stopped. '+String(e.message||e).replace(/\bError:\s*/g,''):'Preparation recovery stopped. Open the original unchanged sequence and reconnect, or save diagnostics. '+String(e));}
   }
   converted=current.phase==='converted';
   if(!['idle','finished','abandoned','converted'].includes(current.phase))throw Error('An unfinished session was found. Automatic edits are blocked. Save diagnostics and restore your saved project copy if needed.');

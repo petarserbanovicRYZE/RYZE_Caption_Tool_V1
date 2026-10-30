@@ -162,11 +162,16 @@ The token remains a random per-user 64-character hexadecimal value. The UXP CCX 
 ## Interrupted-session recovery
 
 Do not delete `session.json` to make the panel connect. This revision automatically
-archives and abandons only the exact legacy **preparation-only** record, after
-checking the original active sequence is unchanged and the host has no active
-conversion. Open that original sequence before reconnecting. Other interrupted
-sessions stay blocked to protect the timeline and Undo history. A corrupted
-checkpoint keeps reports available but is not silently reset. See [audit details](MAC_AUDIT.md).
+archives and abandons only the exact legacy **preparation-only** record. After a
+Premiere restart, an explicit empty host session allows this recovery even if the
+old sequence has changed or no project is open. No timeline operations run, and
+the original record is saved under `history/<batch>.json` first. Existing completed
+conversion history is retained. If the host still has a live preparation, the
+original sequence must match before that preparation can be cancelled; otherwise
+close and reopen Premiere and reconnect. Conversions, visibility changes, unknown
+host responses, corrupt records and failed backups remain blocked. Windows keeps
+its existing recovery policy. Reports include the saved sequence and the first
+observed difference. See [audit details](MAC_AUDIT.md).
 
 ## Verification
 

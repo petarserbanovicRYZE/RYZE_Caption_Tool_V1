@@ -26,7 +26,7 @@ const launch=require('../helper/macos-launcher');
   if(name==='fs')return fs;if(name==='path')return path;if(name==='process')return processModule;if(name==='os')return {tmpdir:()=>'/tmp'};
   if(name==='net')return {createServer:handler=>{bridgeHandler=handler;return bridge;}};
   if(name==='child_process')return {spawn:(command,args,options)=>{spawned={command,args,options};setImmediate(()=>child.emit('spawn'));return child;}};
-  if(name===path.join('/extension','engine.js'))return receivedIo=>{assert.equal(receivedIo.id(),'0123456789abcdef0123456789abcdef');return engine;};
+  if(name===path.join('/extension','engine.js'))return (receivedIo,options)=>{assert.equal(receivedIo.id(),'0123456789abcdef0123456789abcdef');assert.deepEqual(options,{recoverInactivePreparation:true});return engine;};
   throw Error('Unexpected require: '+name);
  };
  const controller=launch({require:req,root:'/extension',dataDir:'/extension-data',socketPath:path.join('/tmp','ryze-test.sock'),io:{id:()=> '0123456789abcdef0123456789abcdef'},log:value=>logs.push(value),platform:'darwin'});

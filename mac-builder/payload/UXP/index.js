@@ -44,7 +44,7 @@ async function connectAutomatically(launchHelper){
   if(config.schema!==1||config.build!=='1.0.7'||config.port!==48771||!/^[a-f0-9]{64}$/.test(config.token||''))throw Error('Setup pairing is missing. Close Premiere and reinstall RYZE.');
   token=config.token;
   await require('./connect.js')(probe,()=>attach(),ms=>new Promise(r=>setTimeout(r,ms)),()=>{status.textContent='Connecting…';},launchHelper?launchMacHelper:null);
- }catch(e){blocked=true;status.textContent=/unfinished|(?:Preparation|Session) recovery/i.test(String(e))?'Helper connected, but session recovery is required. '+String(e):String(e);diagnostic('CONNECT_STOP = '+String(e));}finally{busy=false;buttons();}
+ }catch(e){blocked=true;const message=isMac()?String(e.message||e).replace(/\bError:\s*/g,''):String(e);status.textContent=/unfinished|(?:Preparation|Session) recovery/i.test(message)?'Helper connected, but session recovery is required. '+message:message;diagnostic('CONNECT_STOP = '+message);}finally{busy=false;buttons();}
 }
 connect.addEventListener('click',()=>connectAutomatically(true));
 run.addEventListener('click',async()=>{if(busy||blocked)return;busy=true;buttons();$('bar').style.width='0%';$('reportStatus').textContent='';status.textContent='Reading captions. Keep this sequence open.';

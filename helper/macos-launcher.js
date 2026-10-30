@@ -60,7 +60,7 @@ function startEngineBridge(options){
  const log=typeof options.log==='function'?options.log:fileLogger(req);
  if((options.platform||processModule.platform)!=='darwin')throw Error('macOS helper launcher requires Darwin');
  const config=loadConfig(req,dataDir),generation=io.id();
- const engine=req(path.join(root,'engine.js'))(io);
+ const engine=req(path.join(root,'engine.js'))(io,{recoverInactivePreparation:true});
  const bridgePath=options.socketPath||socketPath(req);
  let child=null,closed=false,ownsSocket=false,busy=false,recovering=false,restarts=0,restartTimer=null;
  const retryLaunch=()=>{
